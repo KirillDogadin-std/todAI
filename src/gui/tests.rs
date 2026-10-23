@@ -1,7 +1,7 @@
 //! Headless keyboard-flow tests: drive the real board with synthetic events
 //! and check what lands in the log.
 
-use egui::{Event, Key, Modifiers, Pos2, RawInput, Rect, vec2};
+use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, vec2};
 use egui_commonmark::CommonMarkCache;
 
 use super::nav::{Focus, Mode, Section};
@@ -237,5 +237,38 @@ fn enter_on_mouse_selection_opens_prompt() {
         h.key(Key::Enter, Modifiers::NONE);
         let r = h.state().elab("r1").cloned().expect("request sent");
         assert_eq!((r.selection.as_str(), r.note.as_deref()), ("iced", Some("why?")));
+    }
+}
+
+#[test]
+fn mouse_drag_select_then_enter() {
+    for vim in [true, false] {
+        let mut h = Harness::new();
+        h.vim = vim;
+        let rect = h.tab.nav.text_rects.iter().find(|(f, _)| *f == item("d1")).unwrap().1;
+        let start = rect.left_center() + vec2(1.0, 0.0);
+        let end = rect.left_center() + vec2(25.0, 0.0);
+        let button = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        h.frame(vec![Event::PointerMoved(start)]);
+        h.frame(vec![button(start, true)]);
+        for i in 1..=5 {
+            h.frame(vec![Event::PointerMoved(start + (end - start) * (i as f32 / 5.0))]);
+        }
+        h.frame(vec![button(end, false)]);
+        h.frame(vec![]);
+        let sel = h.tab.nav.mouse_selection.clone();
+        assert!(matches!(&sel, Some((f, s)) if *f == item("d1") && "Use egui or iced?".starts_with(s.as_str()) && !s.is_empty()),
+            "vim={vim}: selection {sel:?}");
+
+        h.key(Key::Enter, Modifiers::NONE);
+        assert_eq!(h.tab.nav.mode, Mode::Prompt, "vim={vim}");
+        h.text("why?");
+        h.key(Key::Enter, Modifiers::NONE);
+        assert!(h.state().elab("r1").is_some(), "vim={vim}");
     }
 }

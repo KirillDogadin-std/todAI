@@ -95,6 +95,9 @@ pub struct Nav {
     pub prompt_focused: bool,
     /// Text selected with the mouse, and the item it is in.
     pub mouse_selection: Option<(Focus, String)>,
+    /// Where each item's text was drawn last frame (for tests driving the mouse).
+    #[cfg(test)]
+    pub text_rects: Vec<(Focus, egui::Rect)>,
     pub prefix: Option<char>,
     prev_index: usize,
 }
@@ -114,6 +117,8 @@ impl Default for Nav {
             input_focused: None,
             prompt_focused: false,
             mouse_selection: None,
+            #[cfg(test)]
+            text_rects: Vec::new(),
             prefix: None,
             prev_index: 0,
         }
@@ -193,6 +198,8 @@ impl Nav {
         self.right.clear();
         self.input_focused = None;
         self.prompt_focused = false;
+        #[cfg(test)]
+        self.text_rects.clear();
     }
 
     /// Call after the board rendered: syncs the mode with widget focus and

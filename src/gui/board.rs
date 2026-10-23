@@ -267,6 +267,8 @@ impl Board<'_> {
             .layouter(&mut layouter)
             .show(ui);
         let resp = &out.response.response;
+        #[cfg(test)]
+        self.nav.text_rects.push((focus.clone(), resp.rect));
 
         // The cursor range is only reported while the text has focus, so the
         // selection is remembered in `nav` for the button, Enter, and menu.
