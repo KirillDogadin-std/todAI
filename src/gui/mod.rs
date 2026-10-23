@@ -634,10 +634,13 @@ fn zoom_overlay(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache) {
                 ui.add(egui::Label::new(RichText::new(n).small()).wrap());
             }
             ui.separator();
+            // Fixed height: short answers leave empty space instead of the
+            // panel shrinking and jumping around as you step through them.
             let mut scroll = egui::ScrollArea::vertical()
                 .id_salt(("zoom", &rid))
+                .min_scrolled_height(body_height)
                 .max_height(body_height)
-                .auto_shrink([false, true]);
+                .auto_shrink(false);
             if let Some(to) = nav.zoom_scroll_to.take() {
                 scroll = scroll.vertical_scroll_offset(to);
             }

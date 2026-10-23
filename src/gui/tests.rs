@@ -497,6 +497,26 @@ fn zoom_closes_when_its_elaboration_is_trashed() {
 }
 
 #[test]
+fn zoom_panel_size_does_not_depend_on_content() {
+    let mut h = harness_with_elabs(); // r1 "**old** answer", r2 "newer": both short
+    let long = (0..200).map(|i| format!("line {i}\n\n")).collect::<String>();
+    h.log.append(Actor::Operator, |_| Ok(Kind::ElabRequest { rid: "r4".into(), target: "d2".into(), selection: "y".into(), note: None })).unwrap();
+    h.log.append(Actor::Agent, |_| Ok(Kind::ElabAdd { rid: "r4".into(), text_md: long })).unwrap();
+    h.tab.reload_if_dirty_now();
+    let mut size = |h: &mut Harness, rid: &str| {
+        h.tab.nav.open_zoom(rid);
+        for _ in 0..3 {
+            h.frame(vec![]);
+        }
+        h.ctx.memory(|m| m.area_rect(egui::Id::new("zoom"))).expect("zoom panel shown").size()
+    };
+    let short = size(&mut h, "r2");
+    let tall = size(&mut h, "r4");
+    assert_eq!(short, tall);
+    assert!(tall.y > 900.0 * 0.7, "fills most of the window height, got {tall:?}");
+}
+
+#[test]
 fn closing_tabs_keeps_active_index_valid() {
     use super::active_after_close as after;
     assert_eq!(after(2, 0, 2), 1, "closing a tab left of the active one shifts it");
