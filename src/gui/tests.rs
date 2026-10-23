@@ -4,7 +4,7 @@
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, vec2};
 use egui_commonmark::CommonMarkCache;
 
-use super::nav::{Focus, Mode, Section};
+use super::nav::{Focus, Mode, MouseSelection, Section};
 use super::tab::Tab;
 use super::draw_tab;
 use crate::store::{Actor, DecisionStatus, Kind, Log, State};
@@ -228,7 +228,8 @@ fn enter_on_mouse_selection_opens_prompt() {
     for vim in [true, false] {
         let mut h = Harness::new();
         h.vim = vim;
-        h.tab.nav.mouse_selection = Some((item("d1"), "iced".into()));
+        h.tab.nav.mouse_selection =
+            Some(MouseSelection { focus: item("d1"), text: "iced".into(), range: (13, 17) });
         h.key(Key::Enter, Modifiers::NONE);
         let p = h.tab.nav.prompt.as_ref().expect("prompt opened");
         assert_eq!((p.target.as_str(), p.selection.as_str()), ("d1", "iced"));
@@ -262,8 +263,18 @@ fn mouse_drag_select_then_enter() {
         h.frame(vec![button(end, false)]);
         h.frame(vec![]);
         let sel = h.tab.nav.mouse_selection.clone();
-        assert!(matches!(&sel, Some((f, s)) if *f == item("d1") && "Use egui or iced?".starts_with(s.as_str()) && !s.is_empty()),
+        assert!(matches!(&sel, Some(m) if m.focus == item("d1") && "Use egui or iced?".starts_with(m.text.as_str()) && !m.text.is_empty()),
             "vim={vim}: selection {sel:?}");
+
+        // Right-click on the selection must not clear it.
+        let secondary = |pressed| Event::PointerButton { pos: start, button: PointerButton::Secondary, pressed, modifiers: Modifiers::NONE };
+        h.frame(vec![Event::PointerMoved(start)]);
+        h.frame(vec![secondary(true)]);
+        h.frame(vec![secondary(false)]);
+        h.frame(vec![]);
+        let after = h.tab.nav.mouse_selection.clone().map(|m| m.text);
+        assert_eq!(after, sel.map(|m| m.text), "vim={vim}: right-click kept selection");
+        h.key(Key::Escape, Modifiers::NONE); // close the context menu
 
         h.key(Key::Enter, Modifiers::NONE);
         assert_eq!(h.tab.nav.mode, Mode::Prompt, "vim={vim}");

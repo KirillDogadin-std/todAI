@@ -59,6 +59,16 @@ impl Visual {
     }
 }
 
+/// Text selected with the mouse. Kept here because egui only reports the
+/// selection while the text has focus, and any click resets it.
+#[derive(Clone, Debug)]
+pub struct MouseSelection {
+    pub focus: Focus,
+    pub text: String,
+    /// Char range in the item text, for restoring the highlight.
+    pub range: (usize, usize),
+}
+
 /// An elaboration request being written.
 pub struct Prompt {
     pub target: String,
@@ -93,8 +103,7 @@ pub struct Nav {
     /// Set by the board when one of our text inputs has keyboard focus.
     pub input_focused: Option<String>,
     pub prompt_focused: bool,
-    /// Text selected with the mouse, and the item it is in.
-    pub mouse_selection: Option<(Focus, String)>,
+    pub mouse_selection: Option<MouseSelection>,
     /// Where each item's text was drawn last frame (for tests driving the mouse).
     #[cfg(test)]
     pub text_rects: Vec<(Focus, egui::Rect)>,
@@ -274,7 +283,7 @@ impl Nav {
         if self.mode == Mode::Normal
             && !m.shift
             && !m.command
-            && let Some((focus, sel)) = self.mouse_selection.clone()
+            && let Some(MouseSelection { focus, text: sel, .. }) = self.mouse_selection.clone()
         {
             match key {
                 Key::Enter => {
@@ -284,7 +293,8 @@ impl Nav {
                     }
                     return true;
                 }
-                Key::Escape => {
+                // Esc closes an open context menu first; egui handles that.
+                Key::Escape if !egui::Popup::is_any_open(ctx) => {
                     self.mouse_selection = None;
                     self.leave_input(ctx);
                     return true;

@@ -5,14 +5,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use egui::text::{LayoutJob, TextFormat};
+use egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
 use egui::{
     Align, Button, CollapsingHeader, Color32, Frame, Galley, Label, Layout, RichText, ScrollArea,
     Sense, Stroke, TextBuffer, TextEdit, TextStyle, Ui,
 };
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 
-use super::nav::{self, Focus, FocusRequest, Nav, Section, Weight};
+use super::nav::{self, Focus, FocusRequest, MouseSelection, Nav, Section, Weight};
 use crate::store::{Decision, DecisionStatus, Kind, State, Todo};
 
 pub struct Board<'a> {
@@ -259,6 +259,7 @@ impl Board<'_> {
             let job = styled_job(ui, &parts, None, None, wrap);
             ui.ctx().fonts_mut(|f| f.layout_job(job))
         };
+        let right_click = ui.input(|i| i.pointer.secondary_pressed());
         let out = TextEdit::multiline(&mut buf)
             .frame(Frame::NONE)
             .margin(0.0)
@@ -270,18 +271,30 @@ impl Board<'_> {
         #[cfg(test)]
         self.nav.text_rects.push((focus.clone(), resp.rect));
 
-        // The cursor range is only reported while the text has focus, so the
-        // selection is remembered in `nav` for the button, Enter, and menu.
-        if resp.has_focus() {
+        let mine = self.nav.mouse_selection.as_ref().filter(|m| &m.focus == focus);
+        if let Some(m) = mine
+            && ((right_click && resp.hovered()) || resp.context_menu_opened())
+        {
+            // egui moves the caret on any button press; undo that for
+            // right-click so the menu can act on the selection.
+            let mut state = out.state.clone();
+            let (a, b) = m.range;
+            state.cursor.set_char_range(Some(CCursorRange::two(CCursor::new(a), CCursor::new(b))));
+            state.store(ui.ctx(), resp.id);
+        } else if resp.has_focus() {
+            // The cursor range is only reported while the text has focus, so
+            // the selection is remembered in `nav` for the button, Enter, and menu.
             let sel = out.cursor_range.and_then(|r| {
                 let (a, b) = (r.primary.index.0, r.secondary.index.0);
-                (a != b).then(|| text.chars().skip(a.min(b)).take(a.abs_diff(b)).collect::<String>())
+                (a != b).then(|| MouseSelection {
+                    focus: focus.clone(),
+                    text: text.chars().skip(a.min(b)).take(a.abs_diff(b)).collect(),
+                    range: (a.min(b), a.max(b)),
+                })
             });
             match sel {
-                Some(sel) => self.nav.mouse_selection = Some((focus.clone(), sel)),
-                None if self.nav.mouse_selection.as_ref().is_some_and(|(f, _)| f == focus) => {
-                    self.nav.mouse_selection = None
-                }
+                Some(sel) => self.nav.mouse_selection = Some(sel),
+                None if mine.is_some() => self.nav.mouse_selection = None,
                 None => {}
             }
         }
@@ -309,7 +322,7 @@ impl Board<'_> {
     }
 
     fn selection_for(&self, focus: &Focus) -> Option<String> {
-        self.nav.mouse_selection.as_ref().filter(|(f, _)| f == focus).map(|(_, s)| s.clone())
+        self.nav.mouse_selection.as_ref().filter(|m| &m.focus == focus).map(|m| m.text.clone())
     }
 
     fn elaborate(&mut self, focus: &Focus, selection: Option<String>) {
@@ -380,7 +393,7 @@ impl Board<'_> {
         // the click from the widgets inside it.
         if ui.rect_contains_pointer(rect) && ui.input(|i| i.pointer.primary_pressed()) {
             self.nav.cursor = Some(focus.clone());
-            if self.nav.mouse_selection.as_ref().is_some_and(|(f, _)| f != focus) {
+            if self.nav.mouse_selection.as_ref().is_some_and(|m| &m.focus != focus) {
                 self.nav.mouse_selection = None;
             }
         }
