@@ -103,6 +103,7 @@ pub fn run(listener: UnixListener, socket: PathBuf, paths: Vec<PathBuf>) -> Resu
             .with_title("💀 todai")
             .with_app_id("todai")
             .with_inner_size([900.0, 700.0]),
+        glow_options: eframe::egui_glow::GlowConfiguration { vsync: !wayland_session(), ..Default::default() },
         ..Default::default()
     };
     let result =
@@ -110,6 +111,17 @@ pub fn run(listener: UnixListener, socket: PathBuf, paths: Vec<PathBuf>) -> Resu
             .map_err(|e| anyhow!("{e}"));
     let _ = std::fs::remove_file(&socket);
     result
+}
+
+/// Whether winit will pick its Wayland backend. Wayland compositors send no
+/// frame callbacks to hidden windows, and with vsync Mesa blocks
+/// `swap_buffers` until one arrives. winit can't report occlusion there, so
+/// eframe keeps swapping and the stalled event loop stops answering the
+/// compositor's pings ("not responding"). Elsewhere eframe skips hidden
+/// windows itself, so vsync stays on.
+fn wayland_session() -> bool {
+    cfg!(all(unix, not(target_os = "macos")))
+        && (std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("WAYLAND_SOCKET").is_some())
 }
 
 struct App {
