@@ -98,3 +98,7 @@ Full reference: [docs/keyboard.md](docs/keyboard.md).
 - [docs/keyboard.md](docs/keyboard.md): every key and mouse action
 - [docs/board-format.md](docs/board-format.md): the event log
 - [docs/architecture.md](docs/architecture.md): how the code fits together
+
+## License
+
+[Apache-2.0](LICENSE)
