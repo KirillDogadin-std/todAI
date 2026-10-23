@@ -68,7 +68,8 @@ flow. Run an idle frame after each input so focus changes settle.
 ## Working on this machine
 
 - Hyprland uses Lua dispatch: `hyprctl dispatch 'hl.dsp.window.float({ action = "enable", window = "address:0x…" })'`.
-- Use `pkill -x todai`, not `pkill -f todai` (that matches your own shell).
+- To stop the window, use `pkill -f 'todai __gui'`. Not `pkill -x todai`: that
+  also kills agents' `todai wait`. Not `pkill -f todai`: that matches your own shell.
 - To test the window without touching the user's session, set
   `TODAI_SOCKET` and `XDG_STATE_HOME` to scratch paths.
 
