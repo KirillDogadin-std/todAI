@@ -5,6 +5,8 @@ you** and **things only you can do by hand**, so they stop scrolling past in
 chat. You answer in the window; the agent picks the answers up without being
 interrupted.
 
+![The board: pending decisions and todos on the left, the agent's elaborations on the right](docs/screenshots/board.png)
+
 - **Native and light:** Rust + egui, one ~10 MB binary, ~40–55 MB of memory (PSS).
 - **Keyboard first, mouse friendly:** vim-style navigation, a selection mode
   for asking "what does *this* part mean?", and a mouse mode with no
@@ -78,6 +80,12 @@ When the window isn't focused, new posts from the agent show up as a desktop
 notification. The window shows *Pending* and *Done* as collapsible sections; elaborations
 get their own column when the window is wide enough. `?` shows every key.
 Full reference: [docs/keyboard.md](docs/keyboard.md).
+
+| Zoom on a long elaboration | Light theme, *Done* expanded |
+|---|---|
+| ![Zoom overlay over the dimmed board](docs/screenshots/zoom.png) | ![Light theme with resolved, withdrawn and finished items](docs/screenshots/light.png) |
+
+Screenshots show `examples/demo.sh`.
 
 ## Commands
 
