@@ -68,8 +68,6 @@ current state, which is how ids and `seq` stay unique across processes.
 
 ## Known gaps
 
-- Closing the window from the compositor doesn't ask for confirmation (only
-  **Quit** / `Ctrl+Q` do).
 - Focus requests from `todai FILE` may be refused by Wayland compositors.
 - On machines with both NVIDIA and Mesa installed, libglvnd loads both GL
   stacks (~16 MB extra). Setting

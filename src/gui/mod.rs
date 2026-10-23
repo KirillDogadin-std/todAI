@@ -102,6 +102,8 @@ struct App {
     md: CommonMarkCache,
     cheatsheet: bool,
     confirm_quit: bool,
+    /// Set once the user confirmed, so our own Close isn't intercepted.
+    closing: bool,
     requests: mpsc::Receiver<Incoming>,
     saved: Session,
 }
@@ -122,6 +124,7 @@ impl App {
             md: CommonMarkCache::default(),
             cheatsheet: false,
             confirm_quit: false,
+            closing: false,
             requests,
             saved: saved.clone(),
         };
@@ -292,6 +295,7 @@ impl App {
             });
         });
         if yes {
+            self.closing = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if no || modal.should_close() {
@@ -422,6 +426,11 @@ fn active_after_close(active: usize, closed: usize, remaining: usize) -> usize {
 impl eframe::App for App {
     // Runs even while the window is hidden, so socket requests never stall.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // A close from the compositor (or the title bar) asks first, like Quit.
+        if ctx.input(|i| i.viewport().close_requested()) && !self.closing {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.confirm_quit = true;
+        }
         self.serve_requests(ctx);
         self.save_session();
     }

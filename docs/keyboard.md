@@ -64,7 +64,7 @@ Answer fields, todo notes and the elaboration message:
 | `Ctrl+Shift+L` | dark ↔ light theme |
 | `Ctrl+Tab` · `Ctrl+Shift+Tab` · `Ctrl+1`–`9` | switch tab |
 | `Ctrl+W` | close the tab (also its `×`) |
-| `Ctrl+Q` | close the window, after confirming (`Enter`/`y`, `Esc`/`n`); tabs are restored next time |
+| `Ctrl+Q` | close the window, after confirming (`Enter`/`y`, `Esc`/`n`); closing it from the compositor asks too; tabs are restored next time |
 | `Ctrl +` · `Ctrl -` | zoom; also moves the two-column breakpoint |
 
 ## Mouse
