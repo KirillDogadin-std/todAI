@@ -29,6 +29,14 @@ distinct NAME per independent workflow. Pass the printed path as BOARD below.
   context holds the exact commands, in order, ready to copy, plus how to
   verify and how to undo. A chat message may point at the todo; it must not
   replace it.
+- **That includes what you leave open when you finish.** Before ending a
+  turn, anything you would offer or ask in your final message ("want me
+  to…?", "I can also…", follow-ups you noticed, choices you deferred) goes on
+  the board as a decision, with options. Your harness's own question tools
+  (e.g. a multiple-choice prompt, even in plan mode) are chat too: use the
+  board instead while it is attached.
+- If a todo asks the operator to restart the todai window, stop it with
+  `pkill -f 'todai __gui'`. `pkill -x todai` also kills your own `todai wait`.
 - Each command prints the new id (`d3`, `t2`). After posting, keep working on
   whatever doesn't depend on the answer.
 
