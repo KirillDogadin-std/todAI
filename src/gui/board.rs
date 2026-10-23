@@ -114,6 +114,9 @@ impl Board<'_> {
                     ui.label(RichText::new(&r.rid).monospace().weak());
                     ui.label(RichText::new(format!("on {}", r.target)).monospace().weak());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.small_button("Zoom").on_hover_text("Open large (K · double-click)").clicked() {
+                            b.nav.open_zoom(&r.rid);
+                        }
                         match &r.answer {
                             Some(_) => {
                                 let (label, hint) = if open { ("less", "Collapse (o)") } else { ("more", "Expand (o)") };
@@ -447,6 +450,12 @@ impl Board<'_> {
             if self.nav.mouse_selection.as_ref().is_some_and(|m| &m.focus != focus) {
                 self.nav.mouse_selection = None;
             }
+        }
+        if let Focus::Elab(rid) = focus
+            && ui.rect_contains_pointer(rect)
+            && ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary))
+        {
+            self.nav.open_zoom(rid);
         }
         if focused && self.nav.scroll_to_cursor {
             ui.scroll_to_rect(rect, Some(Align::Center));

@@ -455,6 +455,48 @@ fn zr_zm_fold_selected_or_all_and_esc_clears_selection() {
 }
 
 #[test]
+fn zoom_overlay_keyboard_flow() {
+    let mut h = harness_with_elabs(); // display order: r3, r2, r1
+    h.move_to(item("d2"));
+    h.type_keys("K");
+    assert_eq!(h.tab.nav.zoom.as_deref(), Some("r3"), "K on an item zooms its newest elaboration");
+
+    let cursor = h.cursor();
+    h.type_keys("j"); // scrolls the overlay, not the board
+    assert_eq!(h.cursor(), cursor, "board keys don't leak through");
+
+    h.type_keys("n");
+    assert_eq!(h.tab.nav.zoom.as_deref(), Some("r2"), "n goes to the next (older) one");
+    h.type_keys("n");
+    h.type_keys("n");
+    assert_eq!(h.tab.nav.zoom.as_deref(), Some("r1"), "stops at the last");
+    h.type_keys("p");
+    assert_eq!(h.tab.nav.zoom.as_deref(), Some("r2"));
+
+    h.type_keys("e");
+    assert!(h.tab.nav.zoom.is_none(), "follow-up closes the overlay");
+    assert_eq!(h.tab.nav.prompt.as_ref().map(|p| p.selection.as_str()), Some("newer"));
+    h.key(Key::Escape, Modifiers::NONE); // cancel the prompt
+
+    h.move_to(Focus::Elab("r1".into()));
+    h.type_keys("K");
+    assert!(h.tab.nav.zoom.is_some());
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(h.tab.nav.zoom.is_none());
+}
+
+#[test]
+fn zoom_closes_when_its_elaboration_is_trashed() {
+    let mut h = harness_with_elabs();
+    h.tab.nav.open_zoom("r2");
+    h.frame(vec![]);
+    assert!(h.tab.send(Kind::Trash { ids: vec!["r2".into()] }));
+    h.frame(vec![]);
+    h.frame(vec![]);
+    assert!(h.tab.nav.zoom.is_none());
+}
+
+#[test]
 fn closing_tabs_keeps_active_index_valid() {
     use super::active_after_close as after;
     assert_eq!(after(2, 0, 2), 1, "closing a tab left of the active one shifts it");

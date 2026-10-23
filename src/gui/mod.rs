@@ -9,7 +9,7 @@ use std::sync::mpsc;
 
 use anyhow::{Result, anyhow};
 use egui::{Align, Key, KeyboardShortcut, Layout, Modifiers, Panel, RichText, TextEdit, TextStyle};
-use egui_commonmark::CommonMarkCache;
+use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 
 use crate::config::{Config, InputMode, Theme};
 use crate::ipc::{self, Incoming, Reply, Request};
@@ -45,6 +45,7 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("d", "remove marked items, or this one, from the board"),
             ("o  za", "on an elaboration: expand / collapse it"),
             ("zR  zM", "expand / collapse all elaborations (or the selected ones)"),
+            ("K", "zoom: open an elaboration large (on an item: its newest)"),
             ("Esc", "clear the selection"),
             ("e", "elaborate on the whole item"),
             ("v  V", "select text / select all (visual)"),
@@ -63,6 +64,17 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("o", "swap selection ends"),
             ("Enter", "elaborate on selection (word under caret if none)"),
             ("Esc", "cancel"),
+        ],
+    ),
+    (
+        "Zoom (elaboration overlay)",
+        &[
+            ("j k  Down Up", "scroll"),
+            ("Ctrl+d  Ctrl+u", "scroll a page (also PageDown / PageUp)"),
+            ("gg  G", "top / bottom"),
+            ("n  p", "next / previous elaboration"),
+            ("e", "follow up on this answer"),
+            ("Esc  q", "close (or click outside)"),
         ],
     ),
     (
@@ -532,6 +544,7 @@ fn draw_tab(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache, vim: boo
     egui::CentralPanel::default_margins().show(ui, |ui| board.left_column(ui, !split));
     actions.extend(board.out);
     tab.nav.end_render();
+    zoom_overlay(ui, tab, md);
 
     for kind in actions {
         let draft_key = match &kind {
@@ -550,6 +563,7 @@ fn status_bar(ui: &mut egui::Ui, tab: &Tab, vim: bool) {
     Panel::bottom("status").show(ui, |ui| {
         ui.horizontal(|ui| {
             let mode = match (vim, tab.nav.mode) {
+                _ if tab.nav.zoom.is_some() => "ZOOM",
                 (_, Mode::Insert) => "INSERT",
                 (_, Mode::Prompt) => "ELABORATE",
                 (true, Mode::Visual) => "VISUAL",
@@ -573,6 +587,88 @@ fn status_bar(ui: &mut egui::Ui, tab: &Tab, vim: bool) {
             });
         });
     });
+}
+
+/// The zoomed elaboration: a large panel over a dimmed board that fades in,
+/// like Arc's Peek. Keys are handled in `Nav::on_zoom_event`.
+fn zoom_overlay(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache) {
+    let ctx = ui.ctx().clone();
+    // Animated every frame, so each opening fades in from zero.
+    let t = ctx.animate_bool_with_time(egui::Id::new("zoom-fade"), tab.nav.zoom.is_some(), 0.15);
+    let Some(rid) = tab.nav.zoom.clone() else { return };
+    let (state, nav) = (&tab.state, &mut tab.nav);
+    let Some(r) = state.elab(&rid) else {
+        nav.zoom = None; // trashed while open
+        return;
+    };
+    let order: Vec<&str> = state.elabs.iter().rev().map(|e| e.rid.as_str()).collect();
+    let index = order.iter().position(|x| *x == rid).unwrap_or(0);
+    let title = state
+        .decision(&r.target)
+        .map(|d| d.title.as_str())
+        .or_else(|| state.todo(&r.target).map(|t| t.title.as_str()))
+        .unwrap_or("");
+    let screen = ctx.content_rect();
+    let width = (screen.width() * 0.8).clamp(280.0, 1100.0);
+    let body_height = (screen.height() * 0.85 - 150.0).max(80.0);
+
+    let (mut close, mut step, mut follow_up) = (false, 0, false);
+    let modal = egui::Modal::new(egui::Id::new("zoom"))
+        .backdrop_color(egui::Color32::from_black_alpha((150.0 * t) as u8))
+        .show(&ctx, |ui| {
+            ui.multiply_opacity(t);
+            ui.set_width(width);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&r.rid).monospace().weak());
+                ui.label(RichText::new(format!("on {}", r.target)).monospace().weak());
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    close = ui.button("×").on_hover_text("Close (Esc)").clicked();
+                    step += i32::from(ui.add_enabled(index + 1 < order.len(), egui::Button::new("Next")).on_hover_text("n").clicked());
+                    step -= i32::from(ui.add_enabled(index > 0, egui::Button::new("Prev")).on_hover_text("p").clicked());
+                    ui.weak(format!("{} / {}", index + 1, order.len()));
+                    ui.add(egui::Label::new(RichText::new(title).strong()).truncate());
+                });
+            });
+            ui.add(egui::Label::new(RichText::new(format!("“{}”", r.selection)).italics()).wrap());
+            if let Some(n) = &r.note {
+                ui.add(egui::Label::new(RichText::new(n).small()).wrap());
+            }
+            ui.separator();
+            let mut scroll = egui::ScrollArea::vertical()
+                .id_salt(("zoom", &rid))
+                .max_height(body_height)
+                .auto_shrink([false, true]);
+            if let Some(to) = nav.zoom_scroll_to.take() {
+                scroll = scroll.vertical_scroll_offset(to);
+            }
+            let out = scroll.show(ui, |ui| match &r.answer {
+                Some(a) => {
+                    ui.push_id(("zoom-md", &rid), |ui| CommonMarkViewer::new().show(ui, md, a));
+                }
+                None => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.weak("waiting for the agent's answer");
+                    });
+                }
+            });
+            nav.zoom_offset = out.state.offset.y;
+            ui.separator();
+            ui.horizontal(|ui| {
+                if r.answer.is_some() {
+                    follow_up = ui.button("Follow up").on_hover_text("e").clicked();
+                }
+                ui.weak("j k scroll · n p next / previous · e follow up · Esc close");
+            });
+        });
+    if close || modal.should_close() {
+        nav.zoom = None;
+    } else if step != 0 {
+        nav.zoom_step(state, step as isize);
+    } else if follow_up && let Some(a) = &r.answer {
+        nav.zoom = None;
+        nav.open_prompt(r.target.clone(), a.trim().to_owned());
+    }
 }
 
 /// What you can do with the selection; shown only while something is selected.

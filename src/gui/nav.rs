@@ -120,6 +120,11 @@ pub struct Nav {
     pub mark_groups: Vec<Vec<String>>,
     /// A shift-click waiting for the frame's groups to be complete.
     range_target: Option<String>,
+    /// The elaboration shown in the zoom overlay, if open.
+    pub zoom: Option<String>,
+    /// Overlay scrolling: requested jump, and the offset it last rendered at.
+    pub zoom_scroll_to: Option<f32>,
+    pub zoom_offset: f32,
     /// Where each item's text was drawn last frame (for tests driving the mouse).
     #[cfg(test)]
     pub text_rects: Vec<(Focus, egui::Rect)>,
@@ -147,6 +152,9 @@ impl Default for Nav {
             mark_anchor: None,
             mark_groups: Vec::new(),
             range_target: None,
+            zoom: None,
+            zoom_scroll_to: None,
+            zoom_offset: 0.0,
             #[cfg(test)]
             text_rects: Vec::new(),
             prefix: None,
@@ -275,6 +283,13 @@ impl Nav {
         let events = ctx.input(|i| i.events.clone());
         let mut keep = Vec::with_capacity(events.len());
         for ev in events {
+            // The zoom overlay owns the keyboard while it is open.
+            if self.zoom.is_some() {
+                if !self.on_zoom_event(&ev, state, vim, &mut out) {
+                    keep.push(ev);
+                }
+                continue;
+            }
             let grabs_keys = vim && matches!(self.mode, Mode::Normal | Mode::Visual);
             let used = match &ev {
                 Event::Text(t) if grabs_keys => {
@@ -473,6 +488,7 @@ impl Nav {
                 }
             }
             '?' => out.toggle_cheatsheet = true,
+            'K' => self.zoom_at_cursor(state),
             _ => {}
         }
     }
@@ -594,6 +610,91 @@ impl Nav {
             }
             None => {}
         }
+    }
+
+    /// Opens the zoom overlay on an elaboration.
+    pub fn open_zoom(&mut self, rid: &str) {
+        self.zoom = Some(rid.to_owned());
+        self.zoom_scroll_to = Some(0.0);
+        self.cursor = Some(Focus::Elab(rid.to_owned()));
+        self.scroll_to_cursor = true;
+    }
+
+    /// `K`: zoom the elaboration under the cursor, or an item's newest one.
+    fn zoom_at_cursor(&mut self, state: &State) {
+        let rid = match &self.cursor {
+            Some(Focus::Elab(rid)) => Some(rid.clone()),
+            Some(Focus::Item(id)) => state.elabs.iter().rev().find(|r| &r.target == id).map(|r| r.rid.clone()),
+            _ => None,
+        };
+        if let Some(rid) = rid {
+            self.open_zoom(&rid);
+        }
+    }
+
+    /// Keys while zoomed. Returns whether the event was used; every key is,
+    /// so nothing leaks to the board underneath.
+    fn on_zoom_event(&mut self, ev: &Event, state: &State, vim: bool, out: &mut Outcome) -> bool {
+        const LINE: f32 = 60.0;
+        const PAGE: f32 = 400.0;
+        let scroll = |nav: &mut Nav, by: f32| nav.zoom_scroll_to = Some((nav.zoom_offset + by).max(0.0));
+        match ev {
+            Event::Key { key, pressed: true, modifiers, .. } => {
+                if modifiers.command && !modifiers.ctrl {
+                    return false; // leave Cmd/Ctrl shortcuts (tabs, quit) to the app
+                }
+                match key {
+                    Key::Escape => self.zoom = None,
+                    Key::ArrowDown => scroll(self, LINE),
+                    Key::ArrowUp => scroll(self, -LINE),
+                    Key::PageDown => scroll(self, PAGE),
+                    Key::PageUp => scroll(self, -PAGE),
+                    Key::D if modifiers.ctrl => scroll(self, PAGE),
+                    Key::U if modifiers.ctrl => scroll(self, -PAGE),
+                    Key::Home => self.zoom_scroll_to = Some(0.0),
+                    Key::End => self.zoom_scroll_to = Some(f32::MAX),
+                    _ if modifiers.ctrl => return false,
+                    _ => {}
+                }
+                true
+            }
+            Event::Key { modifiers, .. } => !modifiers.ctrl,
+            Event::Text(t) if vim => {
+                for c in t.chars() {
+                    match (self.prefix.take(), c) {
+                        (Some('g'), 'g') => self.zoom_scroll_to = Some(0.0),
+                        (_, 'g') => self.prefix = Some('g'),
+                        (_, 'G') => self.zoom_scroll_to = Some(f32::MAX),
+                        (_, 'j') => scroll(self, LINE),
+                        (_, 'k') => scroll(self, -LINE),
+                        (_, 'n') => self.zoom_step(state, 1),
+                        (_, 'p') => self.zoom_step(state, -1),
+                        (_, 'q') => self.zoom = None,
+                        (_, 'e') => {
+                            if let Some(r) = self.zoom.take().and_then(|rid| state.elab(&rid)) {
+                                let about = r.answer.clone().unwrap_or_else(|| r.selection.clone());
+                                self.open_prompt(r.target.clone(), about.trim().to_owned());
+                            }
+                        }
+                        (_, '?') => out.toggle_cheatsheet = true,
+                        _ => {}
+                    }
+                }
+                true
+            }
+            Event::Text(_) => true,
+            _ => false,
+        }
+    }
+
+    /// `n` / `p` in the overlay: the next / previous elaboration in display
+    /// order (newest first).
+    pub fn zoom_step(&mut self, state: &State, d: isize) {
+        let order: Vec<&str> = state.elabs.iter().rev().map(|r| r.rid.as_str()).collect();
+        let Some(i) = self.zoom.as_deref().and_then(|z| order.iter().position(|r| *r == z)) else { return };
+        let j = (i as isize + d).clamp(0, order.len() as isize - 1) as usize;
+        let next = order[j].to_owned();
+        self.open_zoom(&next);
     }
 
     pub fn elab_is_open(&self, state: &State, rid: &str) -> bool {
