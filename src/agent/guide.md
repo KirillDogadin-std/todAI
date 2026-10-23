@@ -23,6 +23,12 @@ distinct NAME per independent workflow. Pass the printed path as BOARD below.
   type anything.
 - Todos are things only the operator can do (credentials, accounts, hardware,
   approvals). Say exactly what to do and what "done" looks like.
+- **Everything you need from the operator goes on the board, never only in
+  chat.** That includes commands for them to run, settings to change, files to
+  edit, and actions your harness refused to let you do: post a todo whose
+  context holds the exact commands, in order, ready to copy, plus how to
+  verify and how to undo. A chat message may point at the todo; it must not
+  replace it.
 - Each command prints the new id (`d3`, `t2`). After posting, keep working on
   whatever doesn't depend on the answer.
 
