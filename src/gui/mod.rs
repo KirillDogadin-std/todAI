@@ -16,7 +16,7 @@ use nav::{FocusRequest, Mode};
 use tab::Tab;
 
 /// Width, in body-text characters, at which elaborations move into their own column.
-const SPLIT_CHARS: f32 = 240.0;
+const SPLIT_CHARS: f32 = 120.0;
 
 /// Shown in the cheatsheet overlay; keep in sync with `nav.rs`.
 const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[

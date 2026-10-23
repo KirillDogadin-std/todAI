@@ -18,7 +18,7 @@ See `todai --help` for the full command list and `docs/PLAN.md` for the design.
 ## Window
 
 - Left column: accordion with **Pending** (decisions, todos) and **Done**.
-- Elaborations get their own right column once the window fits 240 characters
+- Elaborations get their own right column once the window fits 120 characters
   of body text; narrower windows show them as an accordion section instead.
 
 ### Input modes
