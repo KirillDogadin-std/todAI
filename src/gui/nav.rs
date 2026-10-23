@@ -108,8 +108,11 @@ pub struct Nav {
     pub input_focused: Option<String>,
     pub prompt_focused: bool,
     pub mouse_selection: Option<MouseSelection>,
-    /// Finished items marked for removal (multi-select).
+    /// Finished items and elaborations marked for removal (multi-select).
     pub marked: BTreeSet<String>,
+    /// Elaborations the operator expanded or collapsed by hand; the rest
+    /// follow `elab_auto_open`.
+    pub elab_open: HashMap<String, bool>,
     /// Where each item's text was drawn last frame (for tests driving the mouse).
     #[cfg(test)]
     pub text_rects: Vec<(Focus, egui::Rect)>,
@@ -133,6 +136,7 @@ impl Default for Nav {
             prompt_focused: false,
             mouse_selection: None,
             marked: BTreeSet::new(),
+            elab_open: HashMap::new(),
             #[cfg(test)]
             text_rects: Vec::new(),
             prefix: None,
@@ -383,6 +387,16 @@ impl Nav {
                 ('g', 'g') => self.jump_edge(false),
                 ('g', 't') => out.tab_step = 1,
                 ('g', 'T') => out.tab_step = -1,
+                // On an elaboration, z-commands fold the elaboration itself.
+                ('z', 'a' | 'o' | 'c') if matches!(self.cursor, Some(Focus::Elab(_))) => {
+                    let Some(Focus::Elab(rid)) = self.cursor.clone() else { unreachable!() };
+                    let open = match c {
+                        'o' => true,
+                        'c' => false,
+                        _ => !self.elab_is_open(state, &rid),
+                    };
+                    self.elab_open.insert(rid, open);
+                }
                 ('z', 'a') => self.toggle_section_at_cursor(),
                 ('z', 'o') => self.section_at_cursor().into_iter().for_each(|s| self.set_open(s, true)),
                 ('z', 'c') => self.section_at_cursor().into_iter().for_each(|s| self.set_open(s, false)),
@@ -402,13 +416,19 @@ impl Nav {
             'i' | 'a' => self.activate(state),
             ' ' => match self.cursor.clone() {
                 Some(Focus::Section(_)) => self.toggle_section_at_cursor(),
-                Some(Focus::Item(id)) if state.is_finished(&id) => self.toggle_mark(&id),
+                Some(Focus::Item(id) | Focus::Elab(id)) if state.can_trash(&id) => self.toggle_mark(&id),
                 _ => {}
             },
+            'o' => {
+                if let Some(Focus::Elab(rid)) = self.cursor.clone() {
+                    let open = !self.elab_is_open(state, &rid);
+                    self.elab_open.insert(rid, open);
+                }
+            }
             'd' => {
                 let ids: Vec<String> = match &self.cursor {
                     _ if !self.marked.is_empty() => self.marked.iter().cloned().collect(),
-                    Some(Focus::Item(id)) if state.is_finished(id) => vec![id.clone()],
+                    Some(Focus::Item(id) | Focus::Elab(id)) if state.can_trash(id) => vec![id.clone()],
                     _ => Vec::new(),
                 };
                 if !ids.is_empty() {
@@ -508,6 +528,9 @@ impl Nav {
 
     fn start_visual(&mut self, state: &State, all: bool) {
         let Some(f) = self.cursor.clone() else { return };
+        if let Focus::Elab(rid) = &f {
+            self.elab_open.insert(rid.clone(), true); // can't select hidden text
+        }
         let text: Vec<char> = item_text(state, &f).chars().collect();
         if text.is_empty() {
             return;
@@ -546,6 +569,10 @@ impl Nav {
             }
             None => {}
         }
+    }
+
+    pub fn elab_is_open(&self, state: &State, rid: &str) -> bool {
+        self.elab_open.get(rid).copied().unwrap_or_else(|| elab_auto_open(state, rid))
     }
 
     pub fn toggle_mark(&mut self, id: &str) {
@@ -723,6 +750,16 @@ impl Nav {
             _ => {}
         }
     }
+}
+
+/// Default fold state: open while unanswered, while its item is still
+/// pending, or if it is the newest answer; older answers collapse.
+pub fn elab_auto_open(state: &State, rid: &str) -> bool {
+    let Some(r) = state.elab(rid) else { return false };
+    let item_pending = state.decision(&r.target).is_some_and(|d| d.status == DecisionStatus::Pending)
+        || state.todo(&r.target).is_some_and(|t| t.done.is_none());
+    let newest_answer = state.elabs.iter().rev().find(|e| e.answer.is_some()).is_some_and(|e| e.rid == rid);
+    r.answer.is_none() || item_pending || newest_answer
 }
 
 fn take_draft(drafts: &mut HashMap<String, String>, id: &str) -> Option<String> {

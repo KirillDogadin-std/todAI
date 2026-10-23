@@ -60,7 +60,7 @@ examples/demo.sh        # a populated demo board to play with
 | Finish a todo | **Done**, or `x`; add an optional note for the agent |
 | Ask what something means | select the text (mouse, or `v`), then `Enter` / right-click / **Elaborate**; add a message |
 | Change your mind | **Reopen** a decision or **Undo** a todo in *Done* |
-| Clean up | tick finished items in *Done* (or `space`), then **🗑 Trash selected** (or `d`) |
+| Clean up | tick finished items or elaborations (or `space`), then **🗑 Trash selected** (or `d`) |
 
 When the window isn't focused, new posts from the agent show up as a desktop
 notification. The window shows *Pending* and *Done* as collapsible sections; elaborations

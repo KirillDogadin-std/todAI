@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
 use egui::{
-    Align, Button, CollapsingHeader, Color32, Frame, Galley, Label, Layout, RichText, ScrollArea,
+    Align, Button, Color32, Frame, Galley, Label, Layout, RichText, ScrollArea,
     Sense, Stroke, TextBuffer, TextEdit, TextStyle, Ui,
 };
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
@@ -36,8 +36,8 @@ impl Board<'_> {
         let done: Vec<_> = state.todos.iter().filter(|t| t.done.is_some()).collect();
 
         ScrollArea::vertical().id_salt("left").auto_shrink(false).show(ui, |ui| {
-            let title = format!("Pending  {}", pending.len() + todos.len());
-            self.section(ui, Section::Pending, &title, |b, ui| {
+            let count = (pending.len() + todos.len()).to_string();
+            self.section(ui, Section::Pending, "Pending", &count, |b, ui| {
                 subheading(ui, "Decisions");
                 if pending.is_empty() {
                     ui.weak("Nothing to decide.");
@@ -56,17 +56,13 @@ impl Board<'_> {
             });
 
             if with_elabs {
-                let waiting = state.elabs.iter().filter(|r| r.answer.is_none()).count();
-                let title = match waiting {
-                    0 => format!("Elaborations  {}", state.elabs.len()),
-                    n => format!("Elaborations  {}  ({n} waiting)", state.elabs.len()),
-                };
-                self.section(ui, Section::Elabs, &title, |b, ui| b.elaborations(ui, false));
+                let count = elab_count(state);
+                self.section(ui, Section::Elabs, "Elaborations", &count, |b, ui| b.elaborations(ui, false));
             }
 
-            self.nav.marked.retain(|id| state.is_finished(id));
-            let title = format!("Done  {}", made.len() + done.len());
-            self.section(ui, Section::Done, &title, |b, ui| {
+            self.nav.marked.retain(|id| state.can_trash(id));
+            let count = (made.len() + done.len()).to_string();
+            self.section(ui, Section::Done, "Done", &count, |b, ui| {
                 if !made.is_empty() || !done.is_empty() {
                     b.trash_bar(ui, made.iter().map(|d| &d.id).chain(done.iter().map(|t| &t.id)));
                 }
@@ -92,6 +88,7 @@ impl Board<'_> {
     /// `right` records the cards into the right-hand focus list.
     pub fn elaborations(&mut self, ui: &mut Ui, right: bool) {
         let state = self.state;
+        self.nav.marked.retain(|id| state.can_trash(id));
         if state.elabs.is_empty() {
             ui.weak("No elaborations requested.");
             return;
@@ -110,37 +107,62 @@ impl Board<'_> {
             } else {
                 self.nav.left.push(focus.clone());
             }
+            let open = self.nav.elab_is_open(state, &r.rid);
             self.card(ui, &focus, |b, ui| {
-                ui.horizontal_wrapped(|ui| {
+                ui.horizontal(|ui| {
+                    let mut marked = b.nav.marked.contains(&r.rid);
+                    if ui.checkbox(&mut marked, "").on_hover_text("Select (space)").changed() {
+                        b.nav.toggle_mark(&r.rid);
+                    }
                     ui.label(RichText::new(&r.rid).monospace().weak());
                     ui.label(RichText::new(format!("on {}", r.target)).monospace().weak());
-                    ui.add(Label::new(RichText::new(title(&r.target)).weak()).wrap());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        b.trash_button(ui, &r.rid);
+                        match &r.answer {
+                            Some(_) => {
+                                let (label, hint) = if open { ("less", "Collapse (o)") } else { ("more", "Expand (o)") };
+                                if ui.small_button(label).on_hover_text(hint).clicked() {
+                                    b.nav.elab_open.insert(r.rid.clone(), !open);
+                                }
+                            }
+                            None => {
+                                ui.weak("waiting");
+                                ui.spinner();
+                            }
+                        }
+                        ui.add(Label::new(RichText::new(title(&r.target)).weak()).truncate());
+                    });
                 });
-                ui.add(Label::new(RichText::new(format!("“{}”", r.selection)).italics()).wrap());
-                if let Some(n) = &r.note {
-                    ui.add(Label::new(RichText::new(n).small()).wrap());
+                let quote = RichText::new(format!("“{}”", r.selection)).italics();
+                if open {
+                    ui.add(Label::new(quote).wrap());
+                    if let Some(n) = &r.note {
+                        ui.add(Label::new(RichText::new(n).small()).wrap());
+                    }
+                } else {
+                    ui.add(Label::new(quote).truncate());
+                }
+                let Some(a) = &r.answer else { return };
+                if !open {
+                    // Clicking the preview expands it.
+                    let preview = ui.add(Label::new(preview_job(ui, a)).sense(Sense::click()));
+                    if preview.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        b.nav.elab_open.insert(r.rid.clone(), true);
+                    }
+                    return;
                 }
                 ui.separator();
-                match &r.answer {
-                    Some(_) if b.visual_on(&focus) => {
-                        b.item_text(ui, &focus);
-                    }
-                    Some(a) => {
-                        ui.push_id(&r.rid, |ui| CommonMarkViewer::new().show(ui, b.md, a));
-                        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                            if ui.small_button("Follow up").on_hover_text("e · or v to select").clicked() {
-                                b.nav.focus(focus.clone());
-                                b.nav.open_prompt(r.target.clone(), a.trim().to_owned());
-                            }
-                        });
-                    }
-                    None => {
-                        ui.horizontal(|ui| {
-                            ui.spinner();
-                            ui.weak("waiting for agent");
-                        });
-                    }
+                if b.visual_on(&focus) {
+                    b.item_text(ui, &focus);
+                } else {
+                    ui.push_id(&r.rid, |ui| CommonMarkViewer::new().show(ui, b.md, a));
                 }
+                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                    if ui.small_button("Follow up").on_hover_text("e · or v to select").clicked() {
+                        b.nav.focus(focus.clone());
+                        b.nav.open_prompt(r.target.clone(), a.trim().to_owned());
+                    }
+                });
             });
         }
     }
@@ -395,33 +417,29 @@ impl Board<'_> {
         self.nav.visual.as_ref().is_some_and(|v| &v.target == focus)
     }
 
-    fn section(&mut self, ui: &mut Ui, s: Section, title: &str, body: impl FnOnce(&mut Self, &mut Ui)) {
+    /// A compact, clickable section row; the body renders only while open,
+    /// so hidden items never enter the focus list.
+    fn section(&mut self, ui: &mut Ui, s: Section, name: &str, count: &str, body: impl FnOnce(&mut Self, &mut Ui)) {
         let focus = Focus::Section(s);
         self.nav.left.push(focus.clone());
         let open = self.nav.is_open(s);
-        let resp = CollapsingHeader::new(RichText::new(title).heading())
-            .id_salt(s)
-            .open(Some(open))
-            // Skip the body while the close animation runs, so hidden items
-            // never enter the focus list.
-            .show(ui, |ui| {
-                if open {
-                    body(self, ui)
-                }
-            });
-        let header = &resp.header_response;
+        let header = section_row(ui, name, count, Some(open));
         if header.clicked() {
             self.nav.set_open(s, !open);
             self.nav.cursor = Some(focus.clone());
         }
         if self.vim && self.nav.cursor.as_ref() == Some(&focus) {
             let stroke = Stroke::new(1.5, ui.visuals().selection.stroke.color);
-            ui.painter().rect_stroke(header.rect.expand(2.0), 4.0, stroke, egui::StrokeKind::Outside);
+            ui.painter().rect_stroke(header.rect, 4.0, stroke, egui::StrokeKind::Inside);
             if self.nav.scroll_to_cursor {
                 header.scroll_to_me(Some(Align::Center));
             }
         }
-        ui.add_space(6.0);
+        if open {
+            ui.add_space(2.0);
+            body(self, ui);
+            ui.add_space(4.0);
+        }
     }
 
     fn card(&mut self, ui: &mut Ui, focus: &Focus, body: impl FnOnce(&mut Self, &mut Ui)) {
@@ -449,6 +467,14 @@ impl Board<'_> {
             ui.scroll_to_rect(rect, Some(Align::Center));
         }
         ui.add_space(4.0);
+    }
+}
+
+/// "3" or "3 · 1 waiting".
+pub fn elab_count(state: &State) -> String {
+    match state.elabs.iter().filter(|r| r.answer.is_none()).count() {
+        0 => state.elabs.len().to_string(),
+        n => format!("{} · {n} waiting", state.elabs.len()),
     }
 }
 
@@ -516,6 +542,49 @@ fn track_input(nav: &mut Nav, resp: &egui::Response, id: &str) {
 }
 
 fn subheading(ui: &mut Ui, text: &str) {
-    ui.label(RichText::new(text).strong().size(15.0));
-    ui.add_space(2.0);
+    ui.label(RichText::new(text).strong());
+    ui.add_space(1.0);
+}
+
+/// A slim header row: fold triangle (when `open` is given), small uppercase
+/// name, count on the right. Also used for the elaborations column title.
+pub fn section_row(ui: &mut Ui, name: &str, count: &str, open: Option<bool>) -> egui::Response {
+    let height = ui.text_style_height(&TextStyle::Body) + 8.0;
+    let sense = if open.is_some() { Sense::click() } else { Sense::hover() };
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), sense);
+    let v = ui.visuals().clone();
+    if open.is_some() && resp.hovered() {
+        ui.painter().rect_filled(rect, 4.0, v.widgets.hovered.weak_bg_fill);
+    }
+    let mut x = rect.left() + 4.0;
+    if let Some(open) = open {
+        let icon = egui::Rect::from_center_size(egui::pos2(x + 5.0, rect.center().y), egui::vec2(10.0, 10.0));
+        egui::collapsing_header::paint_default_icon(ui, if open { 1.0 } else { 0.0 }, &resp.clone().with_new_rect(icon));
+        x += 16.0;
+    }
+    let font = egui::FontId::proportional(12.5);
+    let painter = ui.painter();
+    painter.text(egui::pos2(x, rect.center().y), egui::Align2::LEFT_CENTER, name.to_uppercase(), font.clone(), v.strong_text_color());
+    painter.text(egui::pos2(rect.right() - 6.0, rect.center().y), egui::Align2::RIGHT_CENTER, count, font, v.weak_text_color());
+    painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, v.widgets.noninteractive.bg_stroke.color));
+    resp
+}
+
+/// The first couple of lines of an answer as plain text, for collapsed cards.
+fn preview_job(ui: &Ui, markdown: &str) -> LayoutJob {
+    let plain: String = markdown
+        .lines()
+        .map(|l| l.trim().trim_start_matches(['#', '>', '-', '*', ' ']).replace(['*', '`'], ""))
+        .filter(|l| !l.is_empty() && !l.starts_with("```"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut job = LayoutJob::simple(
+        plain.chars().take(400).collect(),
+        TextStyle::Body.resolve(ui.style()),
+        ui.visuals().weak_text_color(),
+        ui.available_width(),
+    );
+    job.wrap.max_rows = 2;
+    job.wrap.overflow_character = Some('…');
+    job
 }

@@ -362,6 +362,63 @@ fn d_without_marks_trashes_cursor_item_only_if_finished() {
     assert!(h.tab.nav.marked.is_empty() && h.tab.confirm_trash.is_none(), "pending items can't be marked");
 }
 
+/// d1 resolved with an answered elaboration r1 (old), plus an answered r2
+/// on pending d2 and an unanswered r3 on pending d2.
+fn harness_with_elabs() -> Harness {
+    let mut h = Harness::new();
+    let op = |k: Kind| h.log.append(Actor::Operator, |_| Ok(k)).unwrap();
+    let agent = |k: Kind| h.log.append(Actor::Agent, |_| Ok(k)).unwrap();
+    let ask = |rid: &str, target: &str| Kind::ElabRequest { rid: rid.into(), target: target.into(), selection: "x".into(), note: None };
+    op(ask("r1", "d1"));
+    agent(Kind::ElabAdd { rid: "r1".into(), text_md: "**old** answer".into() });
+    op(Kind::DecisionResolve { id: "d1".into(), text: "egui".into() });
+    op(ask("r2", "d2"));
+    agent(Kind::ElabAdd { rid: "r2".into(), text_md: "newer".into() });
+    op(ask("r3", "d2"));
+    h.tab.reload_if_dirty_now();
+    h.frame(vec![]);
+    h.frame(vec![]);
+    h
+}
+
+#[test]
+fn elaborations_auto_collapse_only_old_answers() {
+    let h = harness_with_elabs();
+    let open = |rid| super::nav::elab_auto_open(&h.tab.state, rid);
+    assert!(!open("r1"), "answered, item resolved, not newest: collapsed");
+    assert!(open("r2"), "newest answer stays open");
+    assert!(open("r3"), "unanswered stays open");
+}
+
+#[test]
+fn o_and_za_fold_an_elaboration_and_v_unfolds() {
+    let mut h = harness_with_elabs();
+    h.move_to(Focus::Elab("r1".into()));
+    assert!(!h.tab.nav.elab_is_open(&h.tab.state, "r1"));
+    h.type_keys("o");
+    assert!(h.tab.nav.elab_is_open(&h.tab.state, "r1"));
+    h.type_keys("za");
+    assert!(!h.tab.nav.elab_is_open(&h.tab.state, "r1"), "za folds the elaboration, not the section");
+    assert!(h.tab.nav.is_open(Section::Elabs));
+    h.type_keys("v");
+    assert!(h.tab.nav.elab_is_open(&h.tab.state, "r1"), "selecting text unfolds it");
+}
+
+#[test]
+fn elaborations_can_be_marked_and_trashed() {
+    let mut h = harness_with_elabs();
+    h.move_to(Focus::Elab("r3".into())); // unanswered: trashing cancels it
+    h.type_keys(" ");
+    h.move_to(Focus::Elab("r1".into()));
+    h.type_keys(" ");
+    h.type_keys("d");
+    let ids = h.tab.confirm_trash.take().expect("asks to confirm");
+    assert_eq!(ids, ["r1", "r3"]);
+    assert!(h.tab.send(Kind::Trash { ids }));
+    let s = h.state();
+    assert!(s.elab("r1").is_none() && s.elab("r3").is_none() && s.elab("r2").is_some());
+}
+
 #[test]
 fn closing_tabs_keeps_active_index_valid() {
     use super::active_after_close as after;

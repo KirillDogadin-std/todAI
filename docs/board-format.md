@@ -32,7 +32,7 @@ events in order. Always write through `todai`; it validates every event.
 | `todo.undone` | operator | `id` | it isn't after all |
 | `elab.request` | operator | `rid` (`rN`), `target` (item id), `selection`, `note`? | "explain this part" |
 | `elab.add` | agent | `rid`, `text_md` | the explanation, as markdown |
-| `item.trash` | operator | `ids` | remove finished items (resolved or withdrawn decisions, done todos) and their elaborations from the board |
+| `item.trash` | operator | `ids` | remove finished items (resolved or withdrawn decisions, done todos) with their elaborations, and/or elaborations (`rN`) on their own |
 | `ack` | agent | `upto_seq` | the agent has seen operator events up to this seq |
 
 Ids are assigned by the writer: `d`, `t` and `r` followed by a counter.
@@ -48,7 +48,8 @@ Trashed ids are never reused.
   it, validates, assigns `seq` and ids, and appends one line. The agent's CLI
   calls, hooks and the window can write at the same time safely.
 - **Crashes.** A torn last line (no trailing newline) is ignored on read.
-- **Trash.** Only finished items can be trashed. Operator actions on a
+- **Trash.** Only finished items and elaborations can be trashed; trashing an
+  unanswered elaboration cancels it. Operator actions on a
   trashed item are rejected; the agent's late `decision.withdraw` or
   `elab.add` for one is accepted and ignored, so agents never fail because
   the operator tidied up.

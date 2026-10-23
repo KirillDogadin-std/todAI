@@ -24,8 +24,9 @@ The status bar shows the current state: `NORMAL`, `INSERT`, `VISUAL`,
 | `Enter` · `i` · `a` | answer the item (decision resolution or todo note); toggle a section; on an elaboration, jump to its item |
 | `1`–`9` | pick option N into the answer, then `Enter` submits |
 | `x` | todo done ↔ not done; reopen a resolved decision |
-| `space` | in Done: mark / unmark the item (multi-select) |
-| `d` | in Done: remove the marked items, or the one under the cursor, from the board (asks first) |
+| `space` | mark / unmark a finished item or an elaboration (multi-select) |
+| `d` | remove the marked items, or the one under the cursor, from the board (asks first); removing an unanswered elaboration cancels it |
+| `o` · `za` | on an elaboration: expand / collapse it (`zo` / `zc` too) |
 | `e` | elaborate on the whole item |
 | `v` · `V` | select text in the item (visual mode) / select all of it |
 | `za` · `space` | toggle the section (`zo` open, `zc` close) |
@@ -77,8 +78,10 @@ Answer fields, todo notes and the elaboration message:
   **Elaborate**. With no selection, those act on the whole item.
 - **Follow up** on an answered elaboration asks about the answer.
 - Section headers toggle on click.
-- **Clean up Done:** tick items' checkboxes (or **Select all**), then
-  **🗑 Trash selected**; or a card's own 🗑. A dialog confirms first.
+- **Clean up:** tick checkboxes on finished items or elaborations (or
+  **Select all** in Done), then **🗑 Trash selected**; or a card's own 🗑. A
+  dialog confirms first.
+- **Elaborations** fold: **more** / **less**, or click a collapsed preview.
 
 ## Layout
 
@@ -86,3 +89,6 @@ Answer fields, todo notes and the elaboration message:
   (resolved decisions, withdrawn ones struck through, finished todos).
 - Right: **Elaborations**, once the window fits about 120 characters of body
   text. Narrower windows show them as an accordion section on the left.
+- Elaborations collapse to a two-line preview. By default an answer stays
+  open while it is the newest one or its item is still pending, and
+  unanswered requests are always open; your own expand / collapse wins.

@@ -145,6 +145,12 @@ fn trash_removes_finished_items_and_keeps_ids_unique() {
     // Late agent events about trashed things are accepted, and ignored.
     log.append(Actor::Agent, |_| Ok(Kind::ElabAdd { rid: "r1".into(), text_md: "late".into() })).unwrap();
     assert!(op(Kind::DecisionReopen { id: "d1".into() }).is_err());
+    // Elaborations can be trashed on their own, answered or not.
+    op(Kind::ElabRequest { rid: "r2".into(), target: "d2".into(), selection: "b".into(), note: None }).unwrap();
+    op(Kind::Trash { ids: vec!["r2".into()] }).unwrap();
+    let (_, s2) = log.load_state().unwrap();
+    assert!(s2.elab("r2").is_none() && s2.decision("d2").is_some());
+    log.append(Actor::Agent, |_| Ok(Kind::ElabAdd { rid: "r2".into(), text_md: "late".into() })).unwrap();
     // The agent is never told about trashing.
     assert!(unprocessed(&ev, &s).iter().all(|e| !matches!(e.kind, Kind::Trash { .. })));
 }

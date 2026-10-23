@@ -89,10 +89,16 @@ impl State {
         format!("r{}", self.counts[2] + 1)
     }
 
-    /// Whether an item can be trashed: it must be finished.
+    /// A resolved or withdrawn decision, or a done todo.
     pub fn is_finished(&self, id: &str) -> bool {
         self.decision(id).is_some_and(|d| d.status != DecisionStatus::Pending)
             || self.todo(id).is_some_and(|t| t.done.is_some())
+    }
+
+    /// Finished items and any elaboration can be trashed. Trashing an
+    /// unanswered elaboration cancels it.
+    pub fn can_trash(&self, id: &str) -> bool {
+        self.is_finished(id) || self.elab(id).is_some()
     }
 
     /// Late agent events about trashed things are accepted and ignored, so an
@@ -156,8 +162,8 @@ impl State {
                 if ids.is_empty() {
                     bail!("nothing to trash");
                 }
-                if let Some(id) = ids.iter().find(|id| !self.is_finished(id)) {
-                    bail!("{id} is not a finished item");
+                if let Some(id) = ids.iter().find(|id| !self.can_trash(id)) {
+                    bail!("{id} is not a finished item or an elaboration");
                 }
             }
             _ => {}
@@ -217,7 +223,9 @@ impl State {
             Kind::Trash { ids } => {
                 self.decisions.retain(|d| !ids.contains(&d.id));
                 self.todos.retain(|t| !ids.contains(&t.id));
-                let (gone, kept) = std::mem::take(&mut self.elabs).into_iter().partition(|r| ids.contains(&r.target));
+                let (gone, kept) = std::mem::take(&mut self.elabs)
+                    .into_iter()
+                    .partition(|r| ids.contains(&r.target) || ids.contains(&r.rid));
                 self.elabs = kept;
                 let gone: Vec<Elab> = gone;
                 self.trashed.extend(ids.iter().cloned());

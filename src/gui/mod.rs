@@ -41,8 +41,9 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("Enter  i  a", "answer item / toggle section / jump to elaborated item"),
             ("1-9", "pick option N, then Enter to submit"),
             ("x", "todo done / undone; reopen decision"),
-            ("space", "in Done: mark / unmark (multi-select)"),
-            ("d", "in Done: remove marked items, or this one, from the board"),
+            ("space", "mark / unmark a finished item or elaboration (multi-select)"),
+            ("d", "remove marked items, or this one, from the board"),
+            ("o  za", "on an elaboration: expand / collapse it"),
             ("e", "elaborate on the whole item"),
             ("v  V", "select text / select all (visual)"),
             ("za  space", "toggle section (zo / zc open / close)"),
@@ -519,8 +520,8 @@ fn draw_tab(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache, vim: boo
     if split {
         let half = ui.available_width() / 2.0;
         Panel::right("elaborations").resizable(true).default_size(half).show(ui, |ui| {
-            ui.add_space(4.0);
-            ui.heading("Elaborations");
+            ui.add_space(2.0);
+            board::section_row(ui, "Elaborations", &board::elab_count(board.state), None);
             ui.add_space(4.0);
             egui::ScrollArea::vertical().id_salt("right").auto_shrink(false).show(ui, |ui| board.elaborations(ui, true));
         });
