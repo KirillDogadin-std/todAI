@@ -86,7 +86,7 @@ Answer fields, todo notes and the elaboration message:
   elaborations.
 - While anything is selected, an **action bar** at the bottom offers
   **🗑 Delete** (asks first), **Expand** / **Collapse** for the selected
-  elaborations, and **Clear**.
+  elaborations, and **Deselect all**.
 - **Elaborations** fold: **more** / **less**, or click a collapsed preview.
 
 ## Layout

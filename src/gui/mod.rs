@@ -597,7 +597,7 @@ fn action_bar(ui: &mut egui::Ui, tab: &mut Tab) {
             if ui.add_enabled(elabs > 0, egui::Button::new("Collapse")).on_hover_text(fold_hint("Collapse")).clicked() {
                 tab.nav.fold_elabs(&tab.state, false);
             }
-            if ui.button("Clear").on_hover_text("Clear the selection (Esc)").clicked() {
+            if ui.button("Deselect all").on_hover_text("Clear the selection (Esc)").clicked() {
                 tab.nav.marked.clear();
             }
         });
