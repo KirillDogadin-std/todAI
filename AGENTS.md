@@ -15,7 +15,9 @@ cargo build --release       # use this binary for memory or startup measurements
 examples/demo.sh            # populated demo board in a real window (--no-open: just build it)
 ```
 
-Keep `cargo build` warning-free and `cargo test` green before committing.
+CI (`.github/workflows/ci.yml`) builds and tests with `RUSTFLAGS=-D warnings`, so
+test-only code must be warning-free too: check with
+`RUSTFLAGS="-D warnings" cargo test` before committing.
 
 ## Rules that are easy to break
 

@@ -503,7 +503,7 @@ fn zoom_panel_size_does_not_depend_on_content() {
     h.log.append(Actor::Operator, |_| Ok(Kind::ElabRequest { rid: "r4".into(), target: "d2".into(), selection: "y".into(), note: None })).unwrap();
     h.log.append(Actor::Agent, |_| Ok(Kind::ElabAdd { rid: "r4".into(), text_md: long })).unwrap();
     h.tab.reload_if_dirty_now();
-    let mut size = |h: &mut Harness, rid: &str| {
+    let size = |h: &mut Harness, rid: &str| {
         h.tab.nav.open_zoom(rid);
         for _ in 0..3 {
             h.frame(vec![]);
