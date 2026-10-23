@@ -16,12 +16,23 @@ interrupted.
 
 ## Install
 
+**Prebuilt (Linux x86_64, glibc 2.30+):** download `todai-*-x86_64-linux-gnu.tar.gz`
+from [Releases](../../releases), then
+
+```sh
+tar xzf todai-*-x86_64-linux-gnu.tar.gz
+install -m755 todai-*/todai ~/.local/bin/
+```
+
+**From source** (stable Rust; the repo pins `stable`):
+
 ```sh
 git clone <this repo> && cd todai
 cargo install --path .
 ```
 
-Linux (Wayland or X11). Needs a stable Rust toolchain; the repo pins `stable`.
+Runs on Wayland and X11. It needs a GL driver at runtime, plus `notify-send`
+if you want desktop notifications.
 
 ## Use it with your agent
 
