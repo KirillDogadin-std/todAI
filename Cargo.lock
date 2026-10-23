@@ -2646,6 +2646,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_commonmark",
+ "libc",
  "notify",
  "serde",
  "serde_json",

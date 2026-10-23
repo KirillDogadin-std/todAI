@@ -3,13 +3,17 @@ mod nav;
 mod tab;
 mod textnav;
 
-use std::path::PathBuf;
+use std::os::unix::net::UnixListener;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 
 use anyhow::{Result, anyhow};
 use egui::{Align, Key, KeyboardShortcut, Layout, Modifiers, Panel, RichText, TextEdit, TextStyle};
 use egui_commonmark::CommonMarkCache;
 
 use crate::config::{Config, InputMode, Theme};
+use crate::ipc::{self, Incoming, Reply, Request};
+use crate::session::Session;
 use crate::store::{DecisionStatus, Kind};
 use board::Board;
 use nav::{FocusRequest, Mode};
@@ -73,7 +77,9 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
-pub fn run(paths: Vec<PathBuf>) -> Result<()> {
+/// Runs the window until it is closed. `listener` is the already-bound
+/// single-instance socket; it is removed on exit.
+pub fn run(listener: UnixListener, socket: PathBuf, paths: Vec<PathBuf>) -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("todai")
@@ -81,8 +87,11 @@ pub fn run(paths: Vec<PathBuf>) -> Result<()> {
             .with_inner_size([900.0, 700.0]),
         ..Default::default()
     };
-    eframe::run_native("todai", options, Box::new(move |cc| Ok(Box::new(App::new(cc, paths)))))
-        .map_err(|e| anyhow!("{e}"))
+    let result =
+        eframe::run_native("todai", options, Box::new(move |cc| Ok(Box::new(App::new(cc, listener, paths)))))
+            .map_err(|e| anyhow!("{e}"));
+    let _ = std::fs::remove_file(&socket);
+    result
 }
 
 struct App {
@@ -91,18 +100,81 @@ struct App {
     config: Config,
     md: CommonMarkCache,
     cheatsheet: bool,
+    requests: mpsc::Receiver<Incoming>,
+    saved: Session,
 }
 
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>, paths: Vec<PathBuf>) -> App {
+    fn new(cc: &eframe::CreationContext<'_>, listener: UnixListener, paths: Vec<PathBuf>) -> App {
         let config = Config::load();
         apply_theme(&cc.egui_ctx, config.theme);
-        App {
-            tabs: paths.into_iter().map(|p| Tab::open(p, &cc.egui_ctx)).collect(),
+        let (tx, requests) = mpsc::channel();
+        let ctx = cc.egui_ctx.clone();
+        ipc::serve(listener, tx, move || ctx.request_repaint());
+
+        let saved = Session::load();
+        let mut app = App {
+            tabs: Vec::new(),
             active: 0,
             config,
             md: CommonMarkCache::default(),
             cheatsheet: false,
+            requests,
+            saved: saved.clone(),
+        };
+        // Restore last session, skipping boards that were deleted since.
+        for p in saved.tabs.iter().filter(|p| p.exists()) {
+            app.open_or_focus(&cc.egui_ctx, p);
+        }
+        app.active = saved.active.min(app.tabs.len().saturating_sub(1));
+        for p in &paths {
+            app.open_or_focus(&cc.egui_ctx, p);
+        }
+        app
+    }
+
+    fn open_or_focus(&mut self, ctx: &egui::Context, path: &Path) {
+        match self.tabs.iter().position(|t| t.log.path() == path) {
+            Some(i) => self.active = i,
+            None => {
+                self.tabs.push(Tab::open(path.to_owned(), ctx));
+                self.active = self.tabs.len() - 1;
+            }
+        }
+    }
+
+    fn serve_requests(&mut self, ctx: &egui::Context) {
+        while let Ok((req, reply)) = self.requests.try_recv() {
+            let r = match req {
+                Request::Open { path } => {
+                    self.open_or_focus(ctx, &path);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    Reply::ok()
+                }
+                Request::Focus => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    Reply::ok()
+                }
+                Request::List => Reply {
+                    ok: true,
+                    tabs: self.tabs.iter().map(|t| t.log.path().to_owned()).collect(),
+                    active: self.active,
+                    error: None,
+                },
+            };
+            let _ = reply.send(r);
+        }
+    }
+
+    fn save_session(&mut self) {
+        let now = Session { tabs: self.tabs.iter().map(|t| t.log.path().to_owned()).collect(), active: self.active };
+        if now != self.saved {
+            if let Err(e) = now.save()
+                && let Some(t) = self.tabs.get_mut(self.active)
+            {
+                t.error = Some(format!("saving session: {e:#}"));
+            }
+            self.saved = now;
         }
     }
 
@@ -250,6 +322,12 @@ impl App {
 }
 
 impl eframe::App for App {
+    // Runs even while the window is hidden, so socket requests never stall.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.serve_requests(ctx);
+        self.save_session();
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.shortcuts(&ctx);

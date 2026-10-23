@@ -5,7 +5,9 @@ manual todos to an append-only JSONL log through the `todai` CLI; you answer
 them in a small native window, and the agent picks the answers up.
 
 ```sh
-todai board.jsonl                     # open the board window
+todai board.jsonl                     # open the board (new tab if the window is running)
+todai                                 # raise the window, or start it with last session's tabs
+todai tabs                            # list open tabs
 todai add-decision board.jsonl "Use X or Y?" -o X -o Y -c "context"
 todai add-todo board.jsonl "Create the GitHub repo"
 todai inbox board.jsonl               # agent: read and ack operator answers
@@ -16,6 +18,14 @@ todai show board.jsonl                # text view of the board
 See `todai --help` for the full command list and `docs/PLAN.md` for the design.
 
 ## Window
+
+One window, one tab per file. The first `todai FILE` starts the window in the
+background (it outlives the terminal or agent shell that started it); later
+calls hand their file to it over `$XDG_RUNTIME_DIR/todai.sock`, opening a tab
+or switching to it. Open tabs are restored on the next start
+(`~/.local/state/todai/session.json`). Window errors go to
+`~/.local/state/todai/gui.log`; `todai open --foreground FILE` runs it attached
+instead.
 
 - Left column: accordion with **Pending** (decisions, todos) and **Done**.
 - Elaborations get their own right column once the window fits 120 characters

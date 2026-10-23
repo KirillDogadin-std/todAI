@@ -2,6 +2,8 @@ mod cli;
 mod config;
 mod gui;
 mod inbox;
+mod ipc;
+mod session;
 mod store;
 
 use clap::Parser;

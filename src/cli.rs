@@ -6,6 +6,7 @@ use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 
 use crate::inbox;
+use crate::ipc::{self, Bind, Request};
 use crate::store::{Actor, DecisionStatus, Kind, Log, State, unprocessed};
 
 #[derive(Parser)]
@@ -14,14 +15,25 @@ use crate::store::{Actor, DecisionStatus, Kind, Log, State, unprocessed};
 pub struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,
-    /// Shorthand for `todai open FILE`.
-    file: Option<PathBuf>,
+    /// Shorthand for `todai open FILE...`.
+    files: Vec<PathBuf>,
 }
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Open FILE in the board window (new tab if already running).
-    Open { file: PathBuf },
+    /// Open FILEs in the board window: new tabs if it is running, otherwise
+    /// start it in the background. No FILE just raises (or starts) the window.
+    Open {
+        files: Vec<PathBuf>,
+        /// Run the window in this process instead of detaching.
+        #[arg(long)]
+        foreground: bool,
+    },
+    /// List the tabs open in the running window.
+    Tabs,
+    /// Internal: the detached window process.
+    #[command(name = "__gui", hide = true)]
+    Gui { files: Vec<PathBuf> },
 
     /// [agent] Ask the operator to decide something. Prints the new id.
     AddDecision {
@@ -98,13 +110,25 @@ enum Cmd {
 }
 
 pub fn run(cli: Cli) -> Result<()> {
-    let cmd = match (cli.cmd, cli.file) {
-        (Some(c), _) => c,
-        (None, Some(file)) => Cmd::Open { file },
-        (None, None) => bail!("usage: todai FILE | todai <command> (see --help)"),
-    };
+    let cmd = cli.cmd.unwrap_or(Cmd::Open { files: cli.files, foreground: false });
     match cmd {
-        Cmd::Open { file } => crate::gui::run(vec![std::path::absolute(file)?])?,
+        Cmd::Open { files, foreground } => {
+            let files = files.iter().map(std::path::absolute).collect::<std::io::Result<Vec<_>>>()?;
+            if foreground {
+                gui_main(files)?;
+            } else {
+                open(files)?;
+            }
+        }
+        Cmd::Gui { files } => gui_main(files)?,
+        Cmd::Tabs => match ipc::send(&ipc::socket_path(), &Request::List)? {
+            Some(r) => {
+                for (i, t) in r.tabs.iter().enumerate() {
+                    println!("{} {}", if i == r.active { "*" } else { " " }, t.display());
+                }
+            }
+            None => println!("todai: window not running"),
+        },
 
         Cmd::AddDecision { file, title, context, options } => {
             let e = log(&file)?.append(Actor::Agent, |s| {
@@ -193,6 +217,73 @@ pub fn run(cli: Cli) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Hands `files` to the running window, or starts one in the background.
+fn open(files: Vec<PathBuf>) -> Result<()> {
+    let socket = ipc::socket_path();
+    let first = files.first().map_or(Request::Focus, |f| Request::Open { path: f.clone() });
+    if ipc::send(&socket, &first)?.is_some() {
+        for f in files.iter().skip(1) {
+            ipc::send(&socket, &Request::Open { path: f.clone() })?;
+        }
+        return Ok(());
+    }
+    spawn_window(&socket, &files)
+}
+
+/// Starts `todai __gui` in its own session so it outlives the caller (a
+/// terminal or an agent's shell), then waits until it answers on the socket.
+fn spawn_window(socket: &std::path::Path, files: &[PathBuf]) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let log_path = crate::config::state_dir().map(|d| d.join("gui.log"));
+    let stderr = match &log_path {
+        Some(p) => {
+            std::fs::create_dir_all(p.parent().unwrap())?;
+            Stdio::from(std::fs::OpenOptions::new().create(true).append(true).open(p)?)
+        }
+        None => Stdio::null(),
+    };
+    let mut cmd = Command::new(std::env::current_exe()?);
+    cmd.arg("__gui").args(files).stdin(Stdio::null()).stdout(Stdio::null()).stderr(stderr);
+    // SAFETY: setsid is async-signal-safe and touches no Rust state.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn()?;
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait()? {
+            let hint = log_path.map(|p| format!("; see {}", p.display())).unwrap_or_default();
+            bail!("window exited at startup ({status}){hint}");
+        }
+        if std::os::unix::net::UnixStream::connect(socket).is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    bail!("window did not start within 5s");
+}
+
+/// The window process: claims the socket, or forwards to whoever has it.
+fn gui_main(files: Vec<PathBuf>) -> Result<()> {
+    let socket = ipc::socket_path();
+    match ipc::bind(&socket)? {
+        Bind::Listening(listener) => crate::gui::run(listener, socket, files),
+        // Lost a startup race to another window; hand it our files.
+        Bind::Taken => {
+            for f in &files {
+                ipc::send(&socket, &Request::Open { path: f.clone() })?;
+            }
+            Ok(())
+        }
+    }
 }
 
 fn log(file: &PathBuf) -> Result<Log> {
