@@ -61,7 +61,8 @@ examples/demo.sh        # a populated demo board to play with
 | Ask what something means | select the text (mouse, or `v`), then `Enter` / right-click / **Elaborate**; add a message |
 | Change your mind | **Reopen** a decision or **Undo** a todo in *Done* |
 
-The window shows *Pending* and *Done* as collapsible sections; elaborations
+When the window isn't focused, new posts from the agent show up as a desktop
+notification. The window shows *Pending* and *Done* as collapsible sections; elaborations
 get their own column when the window is wide enough. `?` shows every key.
 Full reference: [docs/keyboard.md](docs/keyboard.md).
 

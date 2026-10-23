@@ -172,6 +172,32 @@ impl App {
         }
     }
 
+    /// Desktop notification for agent posts that arrived while the window
+    /// is unfocused. Silently does nothing without `notify-send`.
+    fn notify(&mut self, ctx: &egui::Context) {
+        let focused = ctx.input(|i| i.viewport().focused) == Some(true);
+        for t in &mut self.tabs {
+            let posts = std::mem::take(&mut t.new_posts);
+            if posts.is_empty() || focused {
+                continue;
+            }
+            let mut body: Vec<String> = posts.iter().take(5).cloned().collect();
+            if posts.len() > 5 {
+                body.push(format!("and {} more", posts.len() - 5));
+            }
+            let summary = format!("todai · {}", t.title());
+            let child = std::process::Command::new("notify-send")
+                .args(["--app-name=todai", &summary, &body.join("\n")])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+            // Reap it off-thread so no zombie is left behind.
+            if let Ok(mut c) = child {
+                std::thread::spawn(move || c.wait());
+            }
+        }
+    }
+
     fn save_session(&mut self) {
         let now = Session { tabs: self.tabs.iter().map(|t| t.log.path().to_owned()).collect(), active: self.active };
         if now != self.saved {
@@ -432,15 +458,16 @@ impl eframe::App for App {
             self.confirm_quit = true;
         }
         self.serve_requests(ctx);
+        for t in &mut self.tabs {
+            t.reload_if_dirty();
+        }
+        self.notify(ctx);
         self.save_session();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.shortcuts(&ctx);
-        for t in &mut self.tabs {
-            t.reload_if_dirty();
-        }
 
         let vim = self.vim();
         let dialog = self.quit_dialog(&ctx);

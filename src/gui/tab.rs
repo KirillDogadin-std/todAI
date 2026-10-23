@@ -7,7 +7,7 @@ use anyhow::Result;
 use notify::{RecursiveMode, Watcher};
 
 use super::nav::Nav;
-use crate::store::{Actor, Kind, Log, State};
+use crate::store::{Actor, Event, Kind, Log, State};
 
 /// One open log file: its folded state, unsent drafts, and a watcher that
 /// flags the tab dirty whenever the file changes on disk.
@@ -18,6 +18,11 @@ pub struct Tab {
     pub drafts: HashMap<String, String>,
     pub error: Option<String>,
     pub nav: Nav,
+    /// Agent posts seen since the last check, for desktop notifications.
+    pub new_posts: Vec<String>,
+    /// Highest seq loaded so far; `None` until the first load, so opening a
+    /// board never notifies about its existing items.
+    seen_seq: Option<u64>,
     dirty: Arc<AtomicBool>,
     _watcher: Option<notify::RecommendedWatcher>,
 }
@@ -32,6 +37,8 @@ impl Tab {
             drafts: HashMap::new(),
             error: None,
             nav: Nav::default(),
+            new_posts: Vec::new(),
+            seen_seq: None,
             dirty: dirty.clone(),
         };
         match watch(tab.log.path(), dirty, ctx.clone()) {
@@ -46,12 +53,23 @@ impl Tab {
         name.strip_suffix(".jsonl").unwrap_or(&name).to_owned()
     }
 
+    /// Reloads regardless of the watcher, for tests.
+    #[cfg(test)]
+    pub fn reload_if_dirty_now(&mut self) {
+        self.dirty.store(true, Ordering::Relaxed);
+        self.reload_if_dirty();
+    }
+
     pub fn reload_if_dirty(&mut self) {
         if !self.dirty.swap(false, Ordering::Relaxed) {
             return;
         }
         match self.log.load_state() {
-            Ok((_, state)) => {
+            Ok((events, state)) => {
+                if let Some(seen) = self.seen_seq {
+                    self.new_posts.extend(agent_posts(&events, seen));
+                }
+                self.seen_seq = Some(state.last_seq);
                 self.state = state;
                 self.error = None;
             }
@@ -79,6 +97,20 @@ impl Tab {
             }
         }
     }
+}
+
+/// One line per agent post after `seen`: what the operator should look at.
+pub fn agent_posts(events: &[Event], seen: u64) -> Vec<String> {
+    events
+        .iter()
+        .filter(|e| e.seq > seen && e.by == Actor::Agent)
+        .filter_map(|e| match &e.kind {
+            Kind::DecisionAdd { id, title, .. } => Some(format!("Decision {id}: {title}")),
+            Kind::TodoAdd { id, title, .. } => Some(format!("Todo {id}: {title}")),
+            Kind::ElabAdd { rid, .. } => Some(format!("Elaboration {rid} answered")),
+            _ => None,
+        })
+        .collect()
 }
 
 fn watch(path: &Path, dirty: Arc<AtomicBool>, ctx: egui::Context) -> Result<notify::RecommendedWatcher> {

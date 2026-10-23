@@ -41,6 +41,9 @@ current state, which is how ids and `seq` stay unique across processes.
 - **Live updates.** Each tab watches its board's directory (inotify via
   `notify`) and reloads on change. The window's own writes trigger the same
   reload.
+- **Notifications.** When a reload brings new agent posts (decisions, todos,
+  elaboration answers) and the window is unfocused, one `notify-send` per tab
+  lists them. Existing items never notify when a board is opened.
 - **Hidden windows still answer.** Socket requests are handled in
   `App::logic`, which eframe runs even when the window isn't being drawn.
 - **Frame order** (`App::ui`): shortcuts → key handling against the previous

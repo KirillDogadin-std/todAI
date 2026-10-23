@@ -299,6 +299,20 @@ fn withdrawn_decision_shows_in_done_without_reopen() {
 }
 
 #[test]
+fn notifications_only_for_new_agent_posts() {
+    let mut h = Harness::new();
+    assert!(h.tab.new_posts.is_empty(), "existing items on open never notify");
+    h.log
+        .append(Actor::Agent, |s| {
+            Ok(Kind::DecisionAdd { id: s.next_decision_id(), title: "New?".into(), context: None, options: vec![] })
+        })
+        .unwrap();
+    h.log.append(Actor::Operator, |_| Ok(Kind::TodoDone { id: "t1".into(), note: None })).unwrap();
+    h.tab.reload_if_dirty_now();
+    assert_eq!(h.tab.new_posts, ["Decision d3: New?"], "operator events never notify");
+}
+
+#[test]
 fn closing_tabs_keeps_active_index_valid() {
     use super::active_after_close as after;
     assert_eq!(after(2, 0, 2), 1, "closing a tab left of the active one shifts it");
