@@ -222,3 +222,20 @@ fn mouse_mode_ignores_letters() {
     assert_eq!(h.cursor(), Some(Focus::Section(Section::Pending)));
     assert!(h.state().todo("t1").unwrap().done.is_none());
 }
+
+#[test]
+fn enter_on_mouse_selection_opens_prompt() {
+    for vim in [true, false] {
+        let mut h = Harness::new();
+        h.vim = vim;
+        h.tab.nav.mouse_selection = Some((item("d1"), "iced".into()));
+        h.key(Key::Enter, Modifiers::NONE);
+        let p = h.tab.nav.prompt.as_ref().expect("prompt opened");
+        assert_eq!((p.target.as_str(), p.selection.as_str()), ("d1", "iced"));
+        assert_eq!(h.tab.nav.mode, Mode::Prompt);
+        h.text("why?");
+        h.key(Key::Enter, Modifiers::NONE);
+        let r = h.state().elab("r1").cloned().expect("request sent");
+        assert_eq!((r.selection.as_str(), r.note.as_deref()), ("iced", Some("why?")));
+    }
+}

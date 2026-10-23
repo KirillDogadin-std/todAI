@@ -93,6 +93,8 @@ pub struct Nav {
     /// Set by the board when one of our text inputs has keyboard focus.
     pub input_focused: Option<String>,
     pub prompt_focused: bool,
+    /// Text selected with the mouse, and the item it is in.
+    pub mouse_selection: Option<(Focus, String)>,
     pub prefix: Option<char>,
     prev_index: usize,
 }
@@ -111,6 +113,7 @@ impl Default for Nav {
             focus_request: None,
             input_focused: None,
             prompt_focused: false,
+            mouse_selection: None,
             prefix: None,
             prev_index: 0,
         }
@@ -178,6 +181,7 @@ impl Nav {
 
     pub fn open_prompt(&mut self, target: String, selection: String) {
         self.visual = None;
+        self.mouse_selection = None;
         self.prompt = Some(Prompt { target, selection, note: String::new() });
         self.focus_request = Some(FocusRequest::Prompt);
     }
@@ -260,6 +264,27 @@ impl Nav {
         vim: bool,
         out: &mut Outcome,
     ) -> bool {
+        if self.mode == Mode::Normal
+            && !m.shift
+            && !m.command
+            && let Some((focus, sel)) = self.mouse_selection.clone()
+        {
+            match key {
+                Key::Enter => {
+                    if let Some(target) = elab_target(state, &focus) {
+                        self.focus(focus);
+                        self.open_prompt(target, sel.trim().to_owned());
+                    }
+                    return true;
+                }
+                Key::Escape => {
+                    self.mouse_selection = None;
+                    self.leave_input(ctx);
+                    return true;
+                }
+                _ => {}
+            }
+        }
         match self.mode {
             Mode::Insert | Mode::Prompt => match key {
                 Key::Escape => {

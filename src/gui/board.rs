@@ -266,19 +266,65 @@ impl Board<'_> {
             .desired_width(width)
             .layouter(&mut layouter)
             .show(ui);
-        let range = out.cursor_range?;
-        let (a, b) = (range.primary.index.0, range.secondary.index.0);
-        (a != b).then(|| text.chars().skip(a.min(b)).take(a.abs_diff(b)).collect())
+        let resp = &out.response.response;
+
+        // The cursor range is only reported while the text has focus, so the
+        // selection is remembered in `nav` for the button, Enter, and menu.
+        if resp.has_focus() {
+            let sel = out.cursor_range.and_then(|r| {
+                let (a, b) = (r.primary.index.0, r.secondary.index.0);
+                (a != b).then(|| text.chars().skip(a.min(b)).take(a.abs_diff(b)).collect::<String>())
+            });
+            match sel {
+                Some(sel) => self.nav.mouse_selection = Some((focus.clone(), sel)),
+                None if self.nav.mouse_selection.as_ref().is_some_and(|(f, _)| f == focus) => {
+                    self.nav.mouse_selection = None
+                }
+                None => {}
+            }
+        }
+        let selected = self.selection_for(focus);
+
+        resp.context_menu(|ui| {
+            if let Some(sel) = &selected
+                && ui.button("Elaborate on selection").clicked()
+            {
+                self.elaborate(focus, Some(sel.clone()));
+                ui.close();
+            }
+            if ui.button("Elaborate on whole item").clicked() {
+                self.elaborate(focus, None);
+                ui.close();
+            }
+            if let Some(sel) = &selected
+                && ui.button("Copy").clicked()
+            {
+                ui.ctx().copy_text(sel.clone());
+                ui.close();
+            }
+        });
+        selected
+    }
+
+    fn selection_for(&self, focus: &Focus) -> Option<String> {
+        self.nav.mouse_selection.as_ref().filter(|(f, _)| f == focus).map(|(_, s)| s.clone())
+    }
+
+    fn elaborate(&mut self, focus: &Focus, selection: Option<String>) {
+        if let Some(target) = nav::elab_target(self.state, focus) {
+            let selection = selection.unwrap_or_else(|| nav::item_text(self.state, focus));
+            self.nav.focus(focus.clone());
+            self.nav.open_prompt(target, selection.trim().to_owned());
+        }
     }
 
     fn elaborate_button(&mut self, ui: &mut Ui, focus: &Focus, selected: Option<String>) {
-        let hover = "Elaborate on the selected text, or the whole item (e · v)";
-        if ui.small_button("Elaborate").on_hover_text(hover).clicked()
-            && let Some(target) = nav::elab_target(self.state, focus)
-        {
-            let selection = selected.unwrap_or_else(|| nav::item_text(self.state, focus));
-            self.nav.focus(focus.clone());
-            self.nav.open_prompt(target, selection.trim().to_owned());
+        let hover = match selected {
+            Some(_) => "Elaborate on the selected text (Enter · right-click)",
+            None => "Elaborate on the whole item, or select text first (e · v)",
+        };
+        if ui.small_button("Elaborate").on_hover_text(hover).clicked() {
+            self.elaborate(focus, selected);
         }
     }
 
@@ -332,6 +378,9 @@ impl Board<'_> {
         // the click from the widgets inside it.
         if ui.rect_contains_pointer(rect) && ui.input(|i| i.pointer.primary_pressed()) {
             self.nav.cursor = Some(focus.clone());
+            if self.nav.mouse_selection.as_ref().is_some_and(|(f, _)| f != focus) {
+                self.nav.mouse_selection = None;
+            }
         }
         if focused && self.nav.scroll_to_cursor {
             ui.scroll_to_rect(rect, Some(Align::Center));

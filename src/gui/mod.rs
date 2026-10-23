@@ -345,6 +345,11 @@ fn status_bar(ui: &mut egui::Ui, tab: &Tab, vim: bool) {
             if let Some(err) = &tab.error {
                 ui.colored_label(ui.visuals().error_fg_color, RichText::new(err).monospace());
             }
+            if let Some((_, sel)) = &tab.nav.mouse_selection {
+                let short: String = sel.chars().take(40).collect();
+                let more = if sel.chars().count() > 40 { "…" } else { "" };
+                ui.label(format!("“{short}{more}”  Enter or right-click: elaborate · Esc: clear"));
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.weak("? keys · Ctrl+Shift+M vim/mouse");
             });

@@ -48,8 +48,9 @@ When typing (answers, notes, the elaborate message): `Enter` submits,
 Anywhere: `Ctrl+Tab`/`Ctrl+1..9` tabs, `Ctrl+W` close tab, `Ctrl+Shift+L`
 dark/light (both saved in `~/.config/todai/config.json`), `Ctrl +/-` zoom.
 
-With the mouse: select text in any item and press **Elaborate** (no selection
-elaborates the whole item); **Follow up** on an answered elaboration.
+With the mouse: select text in any item, then press `Enter`, right-click →
+**Elaborate on selection**, or click **Elaborate**. With no selection those
+elaborate on the whole item. **Follow up** asks about an answered elaboration.
 
 ## Memory on multi-vendor GL systems
 
