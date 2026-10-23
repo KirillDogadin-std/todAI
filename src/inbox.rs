@@ -53,9 +53,11 @@ pub fn summarize(file: &Path, log: &[Event], events: &[&Event]) -> String {
             },
             Kind::TodoUndone { id } => format!("- {id} \"{}\" marked NOT done again", title(id)),
             Kind::ElabRequest { rid, target, selection, note, parent: Some(p) } => {
+                let root = root(p);
+                // Replying to the thread's first answer needs no extra pointer.
+                let to = if root == *p { String::new() } else { format!(", replying to {p}") };
                 let mut l = format!(
-                    "- {rid}: operator follows up in thread {} on {target} \"{}\", replying to {p}; {}",
-                    root(p),
+                    "- {rid}: operator follows up in thread {root} on {target} \"{}\"{to}; {}",
                     title(target),
                     quote(selection, answer(p), p)
                 );
