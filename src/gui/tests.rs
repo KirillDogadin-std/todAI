@@ -283,3 +283,13 @@ fn mouse_drag_select_then_enter() {
         assert!(h.state().elab("r1").is_some(), "vim={vim}");
     }
 }
+
+#[test]
+fn closing_tabs_keeps_active_index_valid() {
+    use super::active_after_close as after;
+    assert_eq!(after(2, 0, 2), 1, "closing a tab left of the active one shifts it");
+    assert_eq!(after(2, 2, 2), 1, "closing the last, active tab selects the new last");
+    assert_eq!(after(0, 0, 2), 0, "closing the first, active tab selects the next");
+    assert_eq!(after(0, 2, 2), 0, "closing a tab right of the active one keeps it");
+    assert_eq!(after(0, 0, 0), 0, "closing the only tab");
+}

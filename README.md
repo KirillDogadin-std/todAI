@@ -55,7 +55,7 @@ anchor, `o` swaps ends, `Enter` opens the elaborate prompt for the selection
 When typing (answers, notes, the elaborate message): `Enter` submits,
 `Shift+Enter` adds a newline, `Esc` returns to normal mode.
 
-Anywhere: `Ctrl+Tab`/`Ctrl+1..9` tabs, `Ctrl+W` close tab, `Ctrl+Shift+L`
+Anywhere: `Ctrl+Tab`/`Ctrl+1..9` tabs, `Ctrl+W` or a tab's `×` closes it, `Ctrl+Q` or **Quit** closes the window (asks first), `Ctrl+Shift+L`
 dark/light (both saved in `~/.config/todai/config.json`), `Ctrl +/-` zoom.
 
 With the mouse: select text in any item, then press `Enter`, right-click →

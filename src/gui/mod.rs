@@ -72,6 +72,7 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+Shift+L", "dark ↔ light"),
             ("Ctrl+Tab  Ctrl+1-9", "switch tab"),
             ("Ctrl+W", "close tab"),
+            ("Ctrl+Q", "close window (asks first; tabs are restored next time)"),
             ("Ctrl +  Ctrl -", "zoom (also moves the two-column breakpoint)"),
         ],
     ),
@@ -100,6 +101,7 @@ struct App {
     config: Config,
     md: CommonMarkCache,
     cheatsheet: bool,
+    confirm_quit: bool,
     requests: mpsc::Receiver<Incoming>,
     saved: Session,
 }
@@ -119,6 +121,7 @@ impl App {
             config,
             md: CommonMarkCache::default(),
             cheatsheet: false,
+            confirm_quit: false,
             requests,
             saved: saved.clone(),
         };
@@ -227,9 +230,11 @@ impl App {
                 self.active = i;
             }
         }
-        if shortcut(Modifiers::COMMAND, Key::W) && !self.tabs.is_empty() {
-            self.tabs.remove(self.active);
-            self.active = self.active.min(self.tabs.len().saturating_sub(1));
+        if shortcut(Modifiers::COMMAND, Key::W) {
+            self.close_tab(self.active);
+        }
+        if shortcut(Modifiers::COMMAND, Key::Q) {
+            self.confirm_quit = true;
         }
         if shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::L) {
             self.toggle_theme(ctx);
@@ -245,8 +250,58 @@ impl App {
         }
     }
 
+    fn close_tab(&mut self, i: usize) {
+        if i < self.tabs.len() {
+            self.tabs.remove(i);
+            self.active = active_after_close(self.active, i, self.tabs.len());
+        }
+    }
+
+    /// Confirmation for closing the window. Returns true while it is shown;
+    /// it takes all keys so nothing reaches the board underneath.
+    fn quit_dialog(&mut self, ctx: &egui::Context) -> bool {
+        if !self.confirm_quit {
+            return false;
+        }
+        let (mut yes, mut no) = (false, false);
+        ctx.input_mut(|i| {
+            i.events.retain(|ev| match ev {
+                egui::Event::Key { key, pressed, .. } => {
+                    yes |= *pressed && *key == Key::Enter;
+                    no |= *pressed && *key == Key::Escape;
+                    false
+                }
+                egui::Event::Text(t) => {
+                    yes |= t == "y";
+                    no |= t == "n";
+                    false
+                }
+                _ => true,
+            });
+        });
+        let modal = egui::Modal::new(egui::Id::new("quit")).show(ctx, |ui| {
+            ui.set_width(320.0);
+            ui.heading("Close todai?");
+            ui.add_space(4.0);
+            ui.label("Open tabs come back the next time you run todai.");
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                yes |= ui.button("Close window").clicked();
+                no |= ui.button("Cancel").clicked();
+                ui.weak("Enter / y · Esc / n");
+            });
+        });
+        if yes {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if no || modal.should_close() {
+            self.confirm_quit = false;
+        }
+        true
+    }
+
     fn top_bar(&mut self, ui: &mut egui::Ui) {
-        let (mut theme, mut input, mut help) = (false, false, false);
+        let (mut theme, mut input, mut help, mut close) = (false, false, false, None);
         Panel::top("tabs").show(ui, |ui| {
             ui.horizontal(|ui| {
                 for (i, t) in self.tabs.iter().enumerate() {
@@ -260,8 +315,16 @@ impl App {
                     if r.on_hover_text(t.log.path().display().to_string()).clicked() {
                         self.active = i;
                     }
+                    let x = ui.add(egui::Button::new(RichText::new("×").weak()).small().frame(false));
+                    if x.on_hover_text("Close tab (Ctrl+W)").clicked() {
+                        close = Some(i);
+                    }
+                    ui.add_space(6.0);
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.small_button("Quit").on_hover_text("Close the window (Ctrl+Q)").clicked() {
+                        self.confirm_quit = true;
+                    }
                     let label = match self.config.theme {
                         Theme::Dark => "Light",
                         Theme::Light => "Dark",
@@ -279,6 +342,9 @@ impl App {
                 });
             });
         });
+        if let Some(i) = close {
+            self.close_tab(i);
+        }
         if theme {
             self.toggle_theme(ui.ctx());
         }
@@ -291,34 +357,66 @@ impl App {
     }
 
     fn cheatsheet(&mut self, ctx: &egui::Context) {
+        let screen = ctx.content_rect();
+        let font = egui::FontId::monospace(13.0);
+        let char_w = ctx.fonts_mut(|f| f.glyph_width(&font, 'n'));
+        let key_w = 20.0 * char_w;
+        let width = (screen.width() - 32.0).clamp(240.0, 1000.0);
+        // Two columns only when each still fits the key column plus a readable description.
+        let columns = if width >= 2.0 * (key_w + 40.0 * char_w) { 2 } else { 1 };
+
         let mut open = self.cheatsheet;
         egui::Window::new("Keyboard")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .fixed_size([width, (screen.height() - 80.0).max(120.0)])
             .show(ctx, |ui| {
-                if !self.vim() {
-                    ui.weak("Mouse mode: single-key commands are off. Ctrl+Shift+M to turn them on.");
-                    ui.add_space(6.0);
-                }
-                ui.columns(2, |cols| {
-                    for (i, (title, rows)) in CHEATSHEET.iter().enumerate() {
-                        let ui = &mut cols[usize::from(i >= 2)];
-                        ui.label(RichText::new(*title).strong());
-                        egui::Grid::new(title).num_columns(2).spacing([16.0, 2.0]).show(ui, |ui| {
-                            for (keys, what) in *rows {
-                                ui.label(RichText::new(*keys).monospace());
-                                ui.label(*what);
-                                ui.end_row();
+                egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                    if !self.vim() {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new("Mouse mode: single-key commands are off. Ctrl+Shift+M turns them on.")
+                                    .weak(),
+                            )
+                            .wrap(),
+                        );
+                        ui.add_space(6.0);
+                    }
+                    let section = |ui: &mut egui::Ui, title: &str, rows: &[(&str, &str)]| {
+                        ui.label(RichText::new(title).strong());
+                        for (keys, what) in rows {
+                            ui.horizontal_top(|ui| {
+                                ui.add_sized(
+                                    [key_w, ui.spacing().interact_size.y],
+                                    egui::Label::new(RichText::new(*keys).font(font.clone())).halign(Align::LEFT),
+                                );
+                                ui.add(egui::Label::new(*what).wrap());
+                            });
+                        }
+                        ui.add_space(8.0);
+                    };
+                    if columns == 2 {
+                        ui.columns(2, |cols| {
+                            for (i, (title, rows)) in CHEATSHEET.iter().enumerate() {
+                                section(&mut cols[usize::from(i >= 2)], title, rows);
                             }
                         });
-                        ui.add_space(8.0);
+                    } else {
+                        for (title, rows) in CHEATSHEET {
+                            section(ui, title, rows);
+                        }
                     }
                 });
             });
         self.cheatsheet = open;
     }
+}
+
+/// Index of the active tab after closing tab `closed`, given the count left.
+fn active_after_close(active: usize, closed: usize, remaining: usize) -> usize {
+    if closed < active || active >= remaining { active.saturating_sub(1) } else { active }
 }
 
 impl eframe::App for App {
@@ -336,8 +434,9 @@ impl eframe::App for App {
         }
 
         let vim = self.vim();
+        let dialog = self.quit_dialog(&ctx);
         let mut outcome = None;
-        if let Some(tab) = self.tabs.get_mut(self.active) {
+        if !dialog && let Some(tab) = self.tabs.get_mut(self.active) {
             outcome = Some(tab.nav.handle(&ctx, &tab.state, &mut tab.drafts, vim));
         }
         if let Some(o) = &outcome {
