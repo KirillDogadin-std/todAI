@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 
-use crate::inbox;
+use crate::{agent, inbox};
 use crate::ipc::{self, Bind, Request};
 use crate::store::{Actor, DecisionStatus, Kind, Log, State, unprocessed};
 
@@ -31,6 +31,38 @@ enum Cmd {
     },
     /// List the tabs open in the running window.
     Tabs,
+
+    /// [agent] Start using a board: creates `.todai/NAME.jsonl` at the repo
+    /// root (NAME defaults to `board`), opens it, and prints its path.
+    Attach {
+        name: Option<String>,
+        /// Don't open the window.
+        #[arg(long)]
+        no_window: bool,
+    },
+    /// [agent] Print how an agent should use todai.
+    Guide,
+    /// Install todai into your coding agents, at the scope you choose.
+    /// Interactive without flags; shows every change before making it.
+    Setup {
+        /// Agents to set up (repeat or comma separate).
+        #[arg(long = "agent", value_enum, value_delimiter = ',')]
+        agents: Vec<crate::agent::setup::Agent>,
+        #[arg(long, value_enum)]
+        scope: Option<crate::agent::setup::Scope>,
+        /// Don't ask for confirmation.
+        #[arg(long)]
+        yes: bool,
+        /// Only show what would change.
+        #[arg(long)]
+        dry_run: bool,
+        /// Undo what setup installed (all, or only the given --agent).
+        #[arg(long)]
+        remove: bool,
+    },
+    /// Internal: agent hook entry points, e.g. `todai hook claude stop`.
+    #[command(hide = true)]
+    Hook { agent: String, event: String },
     /// Internal: the detached window process.
     #[command(name = "__gui", hide = true)]
     Gui { files: Vec<PathBuf> },
@@ -121,6 +153,30 @@ pub fn run(cli: Cli) -> Result<()> {
             }
         }
         Cmd::Gui { files } => gui_main(files)?,
+        Cmd::Attach { name, no_window } => {
+            let path = agent::board_path(name.as_deref().unwrap_or("board"))?;
+            std::fs::create_dir_all(path.parent().unwrap())?;
+            std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+            if !no_window && let Err(e) = open(vec![path.clone()]) {
+                eprintln!("todai: could not open the window ({e:#}); the board still works");
+            }
+            println!("{}{}", agent::ATTACHED_MARKER, path.display());
+            println!("Pass this path as BOARD to todai commands. How to use it: `todai guide`.");
+        }
+        Cmd::Guide => print!("{}", agent::GUIDE),
+        Cmd::Setup { agents, scope, yes, dry_run, remove } => {
+            agent::setup::run(agent::setup::Args { agents, scope, yes, dry_run, remove })?
+        }
+        Cmd::Hook { agent: a, event } => {
+            // Hooks must never break the agent: report, but always succeed.
+            let result = match a.as_str() {
+                "claude" => agent::claude::run(&event),
+                other => Err(anyhow::anyhow!("unknown agent {other}")),
+            };
+            if let Err(e) = result {
+                eprintln!("todai hook: {e:#}");
+            }
+        }
         Cmd::Tabs => match ipc::send(&ipc::socket_path(), &Request::List)? {
             Some(r) => {
                 for (i, t) in r.tabs.iter().enumerate() {
@@ -169,6 +225,7 @@ pub fn run(cli: Cli) -> Result<()> {
         }
         Cmd::Wait { file, timeout, no_ack } => {
             let log = log(&file)?;
+            let registered = agent::claude::register_waiter(log.path());
             let deadline = timeout.map(|t| Instant::now() + Duration::from_secs(t));
             // Polling the file size is cheap and avoids inotify edge cases with
             // editors and network filesystems; the agent is not latency-bound here.
@@ -183,6 +240,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 }
                 if deadline.is_some_and(|d| Instant::now() >= d) {
                     println!("todai: wait timed out");
+                    drop(registered); // exit() skips destructors
                     std::process::exit(3);
                 }
                 std::thread::sleep(Duration::from_millis(500));

@@ -17,6 +17,32 @@ todai show board.jsonl                # text view of the board
 
 See `todai --help` for the full command list and `docs/PLAN.md` for the design.
 
+## Use it from your coding agent
+
+```sh
+todai setup
+```
+
+Pick your agents and where to install (this project only, or your user). It
+lists every file it will write or change and asks first; `todai setup --remove`
+undoes exactly that (files you edited since are kept). Scripted:
+`todai setup --agent claude,pi --scope project --yes`.
+
+Nothing is active until you ask for it: in a session, tell the agent to
+**"use todai"**. It runs `todai attach`, which creates `.todai/board.jsonl` at
+the repo root and opens it, and from then on routes its questions and manual
+steps to the board.
+
+| Agent | Installed | How your answers reach it |
+|---|---|---|
+| Claude Code | skill in `.claude/skills`, hooks in `.claude/settings.local.json` (project) or `~/.claude/settings.json` (user) | injected after its next tool call; it can't finish while answers are unread, and is reminded to leave a background `todai wait` running |
+| pi | skill in `.agents/skills`, extension in `.pi/extensions` or `~/.pi/agent/extensions` | steers the running agent, or starts a turn if it is idle |
+| Others (Codex, OpenCode, ...) | skill in `.agents/skills` | the agent checks `todai inbox` between steps and waits with `todai wait` |
+
+Any agent with a shell works without setup too: tell it to run `todai guide`.
+The protocol text ships inside the binary, so upgrading todai never needs a
+re-setup.
+
 ## Window
 
 One window, one tab per file. The first `todai FILE` starts the window in the
