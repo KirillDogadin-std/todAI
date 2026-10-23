@@ -104,7 +104,7 @@ pub fn run(cli: Cli) -> Result<()> {
         (None, None) => bail!("usage: todai FILE | todai <command> (see --help)"),
     };
     match cmd {
-        Cmd::Open { file } => bail!("GUI not implemented yet ({})", file.display()),
+        Cmd::Open { file } => crate::gui::run(vec![std::path::absolute(file)?])?,
 
         Cmd::AddDecision { file, title, context, options } => {
             let e = log(&file)?.append(Actor::Agent, |s| {

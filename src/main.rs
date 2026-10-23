@@ -1,4 +1,6 @@
 mod cli;
+mod config;
+mod gui;
 mod inbox;
 mod store;
 

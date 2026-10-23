@@ -6,7 +6,7 @@ mod event;
 mod state;
 
 pub use event::{Actor, Event, Kind};
-pub use state::{DecisionStatus, State, unprocessed};
+pub use state::{Decision, DecisionStatus, State, Todo, unprocessed};
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
