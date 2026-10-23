@@ -409,7 +409,7 @@ fn render(s: &State) -> String {
                 pending.extend(elabs_for(&d.id));
             }
             DecisionStatus::Resolved { text, .. } => made.push(format!("{}  {}: {text}", d.id, d.title)),
-            DecisionStatus::Withdrawn => {}
+            DecisionStatus::Withdrawn => made.push(format!("{}  {}  (withdrawn)", d.id, d.title)),
         }
     }
     let mut todos = Vec::new();

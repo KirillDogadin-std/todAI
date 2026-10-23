@@ -29,8 +29,8 @@ impl Board<'_> {
         let state = self.state;
         let pending: Vec<_> = state.decisions.iter().filter(|d| d.status == DecisionStatus::Pending).collect();
         let todos: Vec<_> = state.todos.iter().filter(|t| t.done.is_none()).collect();
-        let made: Vec<_> =
-            state.decisions.iter().filter(|d| matches!(d.status, DecisionStatus::Resolved { .. })).collect();
+        // Withdrawn decisions stay visible, struck through, so the history is complete.
+        let made: Vec<_> = state.decisions.iter().filter(|d| d.status != DecisionStatus::Pending).collect();
         let done: Vec<_> = state.todos.iter().filter(|t| t.done.is_some()).collect();
 
         ScrollArea::vertical().id_salt("left").auto_shrink(false).show(ui, |ui| {
@@ -195,19 +195,27 @@ impl Board<'_> {
         });
     }
 
+    /// A resolved or withdrawn decision in the Done section.
     fn resolved_card(&mut self, ui: &mut Ui, d: &Decision) {
-        let DecisionStatus::Resolved { text, .. } = &d.status else { return };
         let focus = Focus::Item(d.id.clone());
         self.nav.left.push(focus.clone());
         self.card(ui, &focus, |b, ui| {
             let selected = b.item_header(ui, &d.id, &focus);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("→").weak());
-                ui.add(Label::new(RichText::new(text).strong()).wrap());
-            });
+            match &d.status {
+                DecisionStatus::Resolved { text, .. } => {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("→").weak());
+                        ui.add(Label::new(RichText::new(text).strong()).wrap());
+                    });
+                }
+                _ => {
+                    ui.label(RichText::new("withdrawn by the agent").weak().italics());
+                }
+            }
             ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                 b.elaborate_button(ui, &focus, selected);
-                if ui.small_button("Reopen").on_hover_text("x").clicked() {
+                let resolved = matches!(d.status, DecisionStatus::Resolved { .. });
+                if resolved && ui.small_button("Reopen").on_hover_text("x").clicked() {
                     b.out.push(Kind::DecisionReopen { id: d.id.clone() });
                 }
             });
@@ -423,7 +431,11 @@ fn styled_job(
         let color = match weight {
             Weight::Strong => v.strong_text_color(),
             Weight::Normal => v.text_color(),
-            Weight::Weak => v.weak_text_color(),
+            Weight::Weak | Weight::Struck => v.weak_text_color(),
+        };
+        let strikethrough = match weight {
+            Weight::Struck => Stroke::new(1.0, color),
+            _ => Stroke::NONE,
         };
         let mut run = String::new();
         let mut run_bg = Color32::TRANSPARENT;
@@ -436,7 +448,7 @@ fn styled_job(
                 Color32::TRANSPARENT
             };
             if bg != run_bg && !run.is_empty() {
-                job.append(&run, 0.0, TextFormat { font_id: font.clone(), color, background: run_bg, ..Default::default() });
+                job.append(&run, 0.0, TextFormat { font_id: font.clone(), color, background: run_bg, strikethrough, ..Default::default() });
                 run.clear();
             }
             run_bg = bg;
@@ -444,7 +456,7 @@ fn styled_job(
             idx += 1;
         }
         if !run.is_empty() {
-            job.append(&run, 0.0, TextFormat { font_id: font.clone(), color, background: run_bg, ..Default::default() });
+            job.append(&run, 0.0, TextFormat { font_id: font.clone(), color, background: run_bg, strikethrough, ..Default::default() });
         }
     }
     job

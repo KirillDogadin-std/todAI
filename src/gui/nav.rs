@@ -39,6 +39,8 @@ pub enum Weight {
     Strong,
     Normal,
     Weak,
+    /// Withdrawn by the agent: weak and struck through.
+    Struck,
 }
 
 /// Text selection inside one item (vim visual mode).
@@ -147,7 +149,11 @@ pub fn item_parts(state: &State, focus: &Focus) -> Vec<(String, Weight)> {
     match focus {
         Focus::Item(id) => {
             if let Some(d) = state.decision(id) {
-                with_context(&d.title, &d.context)
+                let mut parts = with_context(&d.title, &d.context);
+                if d.status == DecisionStatus::Withdrawn {
+                    parts.iter_mut().for_each(|p| p.1 = Weight::Struck);
+                }
+                parts
             } else if let Some(t) = state.todo(id) {
                 with_context(&t.title, &t.context)
             } else {

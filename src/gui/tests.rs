@@ -285,6 +285,20 @@ fn mouse_drag_select_then_enter() {
 }
 
 #[test]
+fn withdrawn_decision_shows_in_done_without_reopen() {
+    let mut h = Harness::new();
+    h.log.append(Actor::Agent, |_| Ok(Kind::DecisionWithdraw { id: "d2".into() })).unwrap();
+    h.frame(vec![]);
+    h.frame(vec![]);
+    h.type_keys("G"); // Done header
+    h.type_keys("l"); // expand
+    h.move_to(item("d2")); // reachable in Done
+    h.type_keys("x"); // reopen is not allowed for withdrawn: no event
+    assert_eq!(h.state().decision("d2").unwrap().status, DecisionStatus::Withdrawn);
+    assert!(super::nav::item_parts(&h.tab.state, &item("d2")).iter().all(|p| p.1 == super::nav::Weight::Struck));
+}
+
+#[test]
 fn closing_tabs_keeps_active_index_valid() {
     use super::active_after_close as after;
     assert_eq!(after(2, 0, 2), 1, "closing a tab left of the active one shifts it");

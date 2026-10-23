@@ -79,6 +79,6 @@ Answer fields, todo notes and the elaboration message:
 ## Layout
 
 - Left: an accordion with **Pending** (decisions, then todos) and **Done**
-  (resolved decisions, finished todos).
+  (resolved decisions, withdrawn ones struck through, finished todos).
 - Right: **Elaborations**, once the window fits about 120 characters of body
   text. Narrower windows show them as an accordion section on the left.
