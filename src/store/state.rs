@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::{Result, bail};
 use serde::Serialize;
 
@@ -47,6 +49,11 @@ pub struct State {
     pub elabs: Vec<Elab>,
     pub last_seq: u64,
     pub acked_seq: u64,
+    /// Ids of items (and elaborations) the operator trashed.
+    pub trashed: BTreeSet<String>,
+    // Counters, so ids are never reused after a trash.
+    #[serde(skip)]
+    counts: [usize; 3],
 }
 
 impl State {
@@ -71,15 +78,31 @@ impl State {
     }
 
     pub fn next_decision_id(&self) -> String {
-        format!("d{}", self.decisions.len() + 1)
+        format!("d{}", self.counts[0] + 1)
     }
 
     pub fn next_todo_id(&self) -> String {
-        format!("t{}", self.todos.len() + 1)
+        format!("t{}", self.counts[1] + 1)
     }
 
     pub fn next_elab_id(&self) -> String {
-        format!("r{}", self.elabs.len() + 1)
+        format!("r{}", self.counts[2] + 1)
+    }
+
+    /// Whether an item can be trashed: it must be finished.
+    pub fn is_finished(&self, id: &str) -> bool {
+        self.decision(id).is_some_and(|d| d.status != DecisionStatus::Pending)
+            || self.todo(id).is_some_and(|t| t.done.is_some())
+    }
+
+    /// Late agent events about trashed things are accepted and ignored, so an
+    /// agent never errors because the operator tidied up.
+    fn ignored_after_trash(&self, kind: &Kind) -> bool {
+        match kind {
+            Kind::DecisionWithdraw { id } => self.trashed.contains(id),
+            Kind::ElabAdd { rid, .. } => self.trashed.contains(rid),
+            _ => false,
+        }
     }
 
     /// Checks that `kind` is a legal next event from `by`, without applying it.
@@ -88,6 +111,9 @@ impl State {
             && allowed != by
         {
             bail!("{:?} may not emit this event", by);
+        }
+        if self.ignored_after_trash(kind) {
+            return Ok(());
         }
         match kind {
             Kind::DecisionAdd { id, .. } if self.decision(id).is_some() => {
@@ -126,6 +152,14 @@ impl State {
             Kind::Ack { upto_seq } if *upto_seq > self.last_seq => {
                 bail!("cannot ack seq {upto_seq} beyond last seq {}", self.last_seq)
             }
+            Kind::Trash { ids } => {
+                if ids.is_empty() {
+                    bail!("nothing to trash");
+                }
+                if let Some(id) = ids.iter().find(|id| !self.is_finished(id)) {
+                    bail!("{id} is not a finished item");
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -137,14 +171,20 @@ impl State {
         }
         self.validate(e.by, &e.kind)?;
         self.last_seq = e.seq;
+        if self.ignored_after_trash(&e.kind) {
+            return Ok(());
+        }
         match &e.kind {
-            Kind::DecisionAdd { id, title, context, options } => self.decisions.push(Decision {
+            Kind::DecisionAdd { id, title, context, options } => {
+                self.counts[0] += 1;
+                self.decisions.push(Decision {
                 id: id.clone(),
                 title: title.clone(),
                 context: context.clone(),
                 options: options.clone(),
                 status: DecisionStatus::Pending,
-            }),
+                })
+            }
             Kind::DecisionResolve { id, text } => {
                 self.decision_mut(id).status =
                     DecisionStatus::Resolved { text: text.clone(), seq: e.seq }
@@ -153,26 +193,36 @@ impl State {
             Kind::DecisionWithdraw { id } => {
                 self.decision_mut(id).status = DecisionStatus::Withdrawn
             }
-            Kind::TodoAdd { id, title, context } => self.todos.push(Todo {
-                id: id.clone(),
-                title: title.clone(),
-                context: context.clone(),
-                done: None,
-            }),
+            Kind::TodoAdd { id, title, context } => {
+                self.counts[1] += 1;
+                self.todos.push(Todo { id: id.clone(), title: title.clone(), context: context.clone(), done: None })
+            }
             Kind::TodoDone { id, note } => self.todo_mut(id).done = Some(note.clone()),
             Kind::TodoUndone { id } => self.todo_mut(id).done = None,
-            Kind::ElabRequest { rid, target, selection, note } => self.elabs.push(Elab {
-                rid: rid.clone(),
-                target: target.clone(),
-                selection: selection.clone(),
-                note: note.clone(),
-                answer: None,
-            }),
+            Kind::ElabRequest { rid, target, selection, note } => {
+                self.counts[2] += 1;
+                self.elabs.push(Elab {
+                    rid: rid.clone(),
+                    target: target.clone(),
+                    selection: selection.clone(),
+                    note: note.clone(),
+                    answer: None,
+                })
+            }
             Kind::ElabAdd { rid, text_md } => {
                 let r = self.elabs.iter_mut().find(|r| &r.rid == rid).unwrap();
                 r.answer = Some(text_md.clone());
             }
             Kind::Ack { upto_seq } => self.acked_seq = self.acked_seq.max(*upto_seq),
+            Kind::Trash { ids } => {
+                self.decisions.retain(|d| !ids.contains(&d.id));
+                self.todos.retain(|t| !ids.contains(&t.id));
+                let (gone, kept) = std::mem::take(&mut self.elabs).into_iter().partition(|r| ids.contains(&r.target));
+                self.elabs = kept;
+                let gone: Vec<Elab> = gone;
+                self.trashed.extend(ids.iter().cloned());
+                self.trashed.extend(gone.into_iter().map(|r| r.rid));
+            }
         }
         Ok(())
     }
@@ -187,10 +237,12 @@ impl State {
     }
 }
 
-/// Operator events the agent has not acked yet.
+/// Operator events the agent has not acked yet. Trashing is housekeeping
+/// the agent never needs to hear about.
 pub fn unprocessed<'a>(events: &'a [Event], state: &State) -> Vec<&'a Event> {
     events
         .iter()
         .filter(|e| e.by == Actor::Operator && e.seq > state.acked_seq)
+        .filter(|e| !matches!(e.kind, Kind::Trash { .. }))
         .collect()
 }

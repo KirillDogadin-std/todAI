@@ -64,6 +64,10 @@ pub enum Kind {
     #[serde(rename = "elab.add")]
     ElabAdd { rid: String, text_md: String },
 
+    /// The operator removed finished items (and their elaborations) from the board.
+    #[serde(rename = "item.trash")]
+    Trash { ids: Vec<String> },
+
     /// The agent has consumed operator events up to and including `upto_seq`.
     #[serde(rename = "ack")]
     Ack { upto_seq: u64 },
@@ -82,7 +86,8 @@ impl Kind {
             | Kind::DecisionReopen { .. }
             | Kind::TodoDone { .. }
             | Kind::TodoUndone { .. }
-            | Kind::ElabRequest { .. } => Some(Actor::Operator),
+            | Kind::ElabRequest { .. }
+            | Kind::Trash { .. } => Some(Actor::Operator),
         }
     }
 }

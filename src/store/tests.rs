@@ -125,3 +125,26 @@ fn concurrent_appends_stay_consistent() {
     assert!(ev.windows(2).all(|w| w[1].seq == w[0].seq + 1));
     assert_eq!(s.todos.last().unwrap().id, "t1000");
 }
+
+#[test]
+fn trash_removes_finished_items_and_keeps_ids_unique() {
+    let (_d, log) = tmp_log();
+    add_decision(&log, "a?");
+    add_decision(&log, "b?");
+    let op = |k: Kind| log.append(Actor::Operator, |_| Ok(k));
+    op(Kind::DecisionResolve { id: "d1".into(), text: "x".into() }).unwrap();
+    op(Kind::ElabRequest { rid: "r1".into(), target: "d1".into(), selection: "a".into(), note: None }).unwrap();
+
+    assert!(op(Kind::Trash { ids: vec!["d2".into()] }).is_err(), "pending items can't be trashed");
+    assert!(op(Kind::Trash { ids: vec![] }).is_err());
+    op(Kind::Trash { ids: vec!["d1".into()] }).unwrap();
+
+    let (ev, s) = log.load_state().unwrap();
+    assert!(s.decision("d1").is_none() && s.elab("r1").is_none(), "item and its elaborations are gone");
+    assert_eq!(add_decision(&log, "c?"), "d3", "ids are not reused");
+    // Late agent events about trashed things are accepted, and ignored.
+    log.append(Actor::Agent, |_| Ok(Kind::ElabAdd { rid: "r1".into(), text_md: "late".into() })).unwrap();
+    assert!(op(Kind::DecisionReopen { id: "d1".into() }).is_err());
+    // The agent is never told about trashing.
+    assert!(unprocessed(&ev, &s).iter().all(|e| !matches!(e.kind, Kind::Trash { .. })));
+}
