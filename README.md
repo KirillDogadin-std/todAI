@@ -20,10 +20,36 @@ See `todai --help` for the full command list and `docs/PLAN.md` for the design.
 - Left column: accordion with **Pending** (decisions, todos) and **Done**.
 - Elaborations get their own right column once the window fits 240 characters
   of body text; narrower windows show them as an accordion section instead.
-- `Ctrl+Enter` submits the focused resolution or todo note.
-- `Ctrl+Tab` / `Ctrl+Shift+Tab` / `Ctrl+1..9` switch tabs, `Ctrl+W` closes one.
-- `Ctrl+Shift+L` toggles dark/light (saved in `~/.config/todai/config.json`).
-- `Ctrl +` / `Ctrl -` zoom.
+
+### Input modes
+
+Mouse works in both modes. **vim** mode (default) adds single-key commands;
+**mouse** mode turns them off so stray letters do nothing. Switch with
+`Ctrl+Shift+M` or the `vim`/`mouse` button. `?` or `F1` shows every key.
+
+| Normal mode | |
+|---|---|
+| `j k` `↓ ↑` · `gg G` · `[ ]` · `Ctrl+d/u` | move · first/last · sections · ×5 |
+| `h l` `← →` | collapse/expand section, switch to/from the elaborations column |
+| `Enter` `i` `a` | answer the item, toggle a section, or jump from an elaboration to its item |
+| `1-9` | pick option N (then `Enter`) |
+| `x` | todo done/undone, reopen a resolved decision |
+| `e` | elaborate on the whole item |
+| `v` / `V` | select text (visual mode) / select all |
+| `gt gT` · `za` | tabs · toggle section |
+
+Visual mode: `h l w b e 0 ^ $ j k gg G` move the caret, `v` sets or drops the
+anchor, `o` swaps ends, `Enter` opens the elaborate prompt for the selection
+(or the word under the caret), `Esc` cancels.
+
+When typing (answers, notes, the elaborate message): `Enter` submits,
+`Shift+Enter` adds a newline, `Esc` returns to normal mode.
+
+Anywhere: `Ctrl+Tab`/`Ctrl+1..9` tabs, `Ctrl+W` close tab, `Ctrl+Shift+L`
+dark/light (both saved in `~/.config/todai/config.json`), `Ctrl +/-` zoom.
+
+With the mouse: select text in any item and press **Elaborate** (no selection
+elaborates the whole item); **Follow up** on an answered elaboration.
 
 ## Memory on multi-vendor GL systems
 

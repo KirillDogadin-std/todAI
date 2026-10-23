@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::Result;
 use notify::{RecursiveMode, Watcher};
 
+use super::nav::Nav;
 use crate::store::{Actor, Kind, Log, State};
 
 /// One open log file: its folded state, unsent drafts, and a watcher that
@@ -16,6 +17,7 @@ pub struct Tab {
     /// Resolution drafts keyed by decision id, and note drafts keyed by todo id.
     pub drafts: HashMap<String, String>,
     pub error: Option<String>,
+    pub nav: Nav,
     dirty: Arc<AtomicBool>,
     _watcher: Option<notify::RecommendedWatcher>,
 }
@@ -29,6 +31,7 @@ impl Tab {
             state: State::default(),
             drafts: HashMap::new(),
             error: None,
+            nav: Nav::default(),
             dirty: dirty.clone(),
         };
         match watch(tab.log.path(), dirty, ctx.clone()) {
@@ -57,8 +60,14 @@ impl Tab {
     }
 
     /// Appends an operator event; on success the watcher triggers a reload.
-    pub fn send(&mut self, kind: Kind) -> bool {
-        match self.log.append(Actor::Operator, |_| Ok(kind)) {
+    pub fn send(&mut self, mut kind: Kind) -> bool {
+        let result = self.log.append(Actor::Operator, |s| {
+            if let Kind::ElabRequest { rid, .. } = &mut kind {
+                *rid = s.next_elab_id();
+            }
+            Ok(kind)
+        });
+        match result {
             Ok(_) => {
                 // Reload now rather than waiting a frame for the watcher.
                 self.dirty.store(true, Ordering::Relaxed);

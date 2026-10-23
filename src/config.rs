@@ -12,10 +12,19 @@ pub enum Theme {
     Light,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum InputMode {
+    #[default]
+    Vim,
+    Mouse,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(default)]
 pub struct Config {
     pub theme: Theme,
+    pub input: InputMode,
 }
 
 impl Config {
