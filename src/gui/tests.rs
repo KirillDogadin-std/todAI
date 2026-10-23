@@ -592,14 +592,17 @@ fn zoom_on_items_steps_through_the_left_column() {
 #[test]
 fn hack_backs_up_body_text_after_the_system_font() {
     let ctx = egui::Context::default();
-    ctx.set_fonts(super::font_definitions(None));
+    ctx.set_fonts(super::font_definitions(None, None));
     let _ = ctx.run_ui(RawInput::default(), |_| {});
     let font = egui::FontId::proportional(14.0);
     let missing: String = "→←⇒►─".chars().filter(|c| !ctx.fonts_mut(|f| f.has_glyph(&font, *c))).collect();
     assert!(missing.is_empty(), "body text lacks: {missing}");
 
-    let defs = super::font_definitions(Some(b"not a font".to_vec()));
+    let defs = super::font_definitions(Some(b"a".to_vec()), Some(b"b".to_vec()));
     let prop = &defs.families[&egui::FontFamily::Proportional];
-    assert_eq!((prop.first().map(String::as_str), prop.last().map(String::as_str)), (Some("system"), Some("Hack")));
-    assert!(super::system_font("no-such-family-xyz").is_none_or(|b| !b.is_empty()));
+    let hack = prop.iter().position(|f| f == "Hack");
+    assert_eq!((prop.first().map(String::as_str), prop.last().map(String::as_str)), (Some("system"), Some("symbols")));
+    assert_eq!(hack, Some(prop.len() - 2), "Hack just before the symbol font");
+    assert!(super::load_font("/nonexistent".into()).is_none());
+    assert!(super::load_font(file!().into()).is_none(), "a file that isn't a font is skipped");
 }

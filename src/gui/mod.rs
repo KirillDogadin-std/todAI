@@ -141,7 +141,10 @@ impl App {
     fn new(cc: &eframe::CreationContext<'_>, listener: UnixListener, paths: Vec<PathBuf>) -> App {
         let config = Config::load();
         apply_theme(&cc.egui_ctx, config.theme);
-        cc.egui_ctx.set_fonts(font_definitions(system_font("sans-serif")));
+        let sans = fc_match("sans-serif");
+        // Only if it's a different file: the system font may already cover them.
+        let symbols = fc_match(SYMBOLS).filter(|s| Some(s) != sans.as_ref());
+        cc.egui_ctx.set_fonts(font_definitions(sans.and_then(load_font), symbols.and_then(load_font)));
         let (tx, requests) = mpsc::channel();
         let ctx = cc.egui_ctx.clone();
         ipc::serve(listener, tx, move || ctx.request_repaint());
@@ -828,10 +831,15 @@ fn confirm(ctx: &egui::Context, id: &str, title: &str, body: &str, yes_label: &s
     }
 }
 
+/// A fontconfig pattern for symbols agents write that neither the usual
+/// sans-serif fonts nor Hack have: check and cross marks (U+2713, U+2717).
+const SYMBOLS: &str = "sans-serif:charset=2713 2717";
+
 /// Body text: the system's sans-serif first, then egui's bundled fonts, then
 /// Hack (already loaded for monospace), which has arrows and box drawing that
-/// the bundled proportional fonts lack and would draw as boxes.
-fn font_definitions(system: Option<Vec<u8>>) -> egui::FontDefinitions {
+/// the bundled proportional fonts lack and would draw as boxes, then a system
+/// font that has the remaining symbols.
+fn font_definitions(system: Option<Vec<u8>>, symbols: Option<Vec<u8>>) -> egui::FontDefinitions {
     let mut defs = egui::FontDefinitions::default();
     let prop = defs.families.entry(egui::FontFamily::Proportional).or_default();
     prop.push("Hack".to_owned());
@@ -839,17 +847,22 @@ fn font_definitions(system: Option<Vec<u8>>) -> egui::FontDefinitions {
         prop.insert(0, "system".to_owned());
         defs.font_data.insert("system".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
     }
+    if let Some(bytes) = symbols {
+        prop.push("symbols".to_owned());
+        defs.font_data.insert("symbols".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+    }
     defs
 }
 
-/// The font file fontconfig picks for `family`, if fontconfig is there and
-/// the file parses (egui panics on a font it can't read).
-fn system_font(family: &str) -> Option<Vec<u8>> {
-    let out = std::process::Command::new("fc-match").args(["-f", "%{file}", family]).output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let bytes = std::fs::read(String::from_utf8(out.stdout).ok()?).ok()?;
+/// The font file fontconfig picks for `pattern`, if fontconfig is there.
+fn fc_match(pattern: &str) -> Option<String> {
+    let out = std::process::Command::new("fc-match").args(["-f", "%{file}", pattern]).output().ok()?;
+    out.status.success().then(|| String::from_utf8(out.stdout).ok()).flatten().filter(|p| !p.is_empty())
+}
+
+/// The font at `path`, if it parses (egui panics on a font it can't read).
+fn load_font(path: String) -> Option<Vec<u8>> {
+    let bytes = std::fs::read(path).ok()?;
     skrifa::FontRef::from_index(&bytes, 0).is_ok().then_some(bytes)
 }
 
