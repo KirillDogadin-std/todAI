@@ -1,24 +1,27 @@
 use anyhow::{Result, bail};
+use serde::Serialize;
 
 use super::event::{Actor, Event, Kind};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "lowercase")]
 pub enum DecisionStatus {
     Pending,
     Resolved { text: String, seq: u64 },
     Withdrawn,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Decision {
     pub id: String,
     pub title: String,
     pub context: Option<String>,
     pub options: Vec<String>,
+    #[serde(flatten)]
     pub status: DecisionStatus,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Todo {
     pub id: String,
     pub title: String,
@@ -27,7 +30,7 @@ pub struct Todo {
     pub done: Option<Option<String>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Elab {
     pub rid: String,
     pub target: String,
@@ -37,7 +40,7 @@ pub struct Elab {
 }
 
 /// Current view of a log, produced by folding its events in order.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct State {
     pub decisions: Vec<Decision>,
     pub todos: Vec<Todo>,

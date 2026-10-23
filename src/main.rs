@@ -1,3 +1,9 @@
+mod cli;
+mod inbox;
 mod store;
 
-fn main() {}
+use clap::Parser;
+
+fn main() -> anyhow::Result<()> {
+    cli::run(cli::Cli::parse())
+}
