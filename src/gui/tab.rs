@@ -118,12 +118,15 @@ pub fn agent_posts(events: &[Event], seen: u64) -> Vec<String> {
 
 fn watch(path: &Path, dirty: Arc<AtomicBool>, ctx: egui::Context) -> Result<notify::RecommendedWatcher> {
     // Watch the directory, not the file: the file may not exist yet, and some
-    // writers replace it instead of appending.
+    // writers replace it instead of appending. Access events (open, read,
+    // close without writing) are skipped: our own reload opens the file, and
+    // reacting to that would reload and repaint forever.
     let dir = path.parent().unwrap_or(Path::new("/")).to_owned();
     std::fs::create_dir_all(&dir)?;
     let target = path.to_owned();
     let mut w = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(ev) = res
+            && !ev.kind.is_access()
             && ev.paths.iter().any(|p| p == &target)
         {
             dirty.store(true, Ordering::Relaxed);
@@ -132,4 +135,29 @@ fn watch(path: &Path, dirty: Arc<AtomicBool>, ctx: egui::Context) -> Result<noti
     })?;
     w.watch(&dir, RecursiveMode::NonRecursive)?;
     Ok(w)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn own_reload_does_not_mark_dirty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("b.jsonl");
+        Log::new(path.clone())
+            .append(Actor::Agent, |_| Ok(Kind::TodoAdd { id: "t1".into(), title: "x".into(), context: None }))
+            .unwrap();
+        let mut tab = Tab::open(path.clone(), &egui::Context::default());
+        tab.reload_if_dirty();
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(!tab.dirty.load(Ordering::Relaxed), "reading the board must not look like a change");
+
+        Log::new(path)
+            .append(Actor::Agent, |_| Ok(Kind::TodoAdd { id: "t2".into(), title: "y".into(), context: None }))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(tab.dirty.load(Ordering::Relaxed), "an append must still be seen");
+    }
 }
