@@ -204,7 +204,7 @@ impl Board<'_> {
             match &d.status {
                 DecisionStatus::Resolved { text, .. } => {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("→").weak());
+                        ui.label(RichText::new("»").weak());
                         ui.add(Label::new(RichText::new(text).strong()).wrap());
                     });
                 }

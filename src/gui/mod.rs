@@ -27,12 +27,12 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
     (
         "Move",
         &[
-            ("j k  ↓ ↑", "next / previous"),
+            ("j k  Down Up", "next / previous"),
             ("gg  G", "first / last"),
             ("[  ]", "previous / next section"),
             ("Ctrl+d  Ctrl+u", "5 down / up"),
-            ("h  ←", "to section header, collapse; back to left column"),
-            ("l  →", "expand section; to elaborations column"),
+            ("h  Left", "to section header, collapse; back to left column"),
+            ("l  Right", "expand section; to elaborations column"),
         ],
     ),
     (
@@ -40,7 +40,7 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
         &[
             ("Enter  i  a", "answer item / toggle section / jump to elaborated item"),
             ("1-9", "pick option N, then Enter to submit"),
-            ("x", "todo done ↔ undone; reopen decision"),
+            ("x", "todo done / undone; reopen decision"),
             ("e", "elaborate on the whole item"),
             ("v  V", "select text / select all (visual)"),
             ("za  space", "toggle section (zo / zc open / close)"),
@@ -68,8 +68,8 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
         "Anywhere",
         &[
             ("?  F1", "this cheatsheet"),
-            ("Ctrl+Shift+M", "vim ↔ mouse mode"),
-            ("Ctrl+Shift+L", "dark ↔ light"),
+            ("Ctrl+Shift+M", "vim / mouse mode"),
+            ("Ctrl+Shift+L", "dark / light"),
             ("Ctrl+Tab  Ctrl+1-9", "switch tab"),
             ("Ctrl+W", "close tab"),
             ("Ctrl+Q", "close window (asks first; tabs are restored next time)"),

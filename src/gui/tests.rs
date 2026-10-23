@@ -321,3 +321,16 @@ fn closing_tabs_keeps_active_index_valid() {
     assert_eq!(after(0, 2, 2), 0, "closing a tab right of the active one keeps it");
     assert_eq!(after(0, 0, 0), 0, "closing the only tab");
 }
+
+#[test]
+fn default_fonts_have_glyphs_we_use() {
+    let ctx = egui::Context::default();
+    let _ = ctx.run_ui(RawInput::default(), |_| {});
+    let font = egui::FontId::proportional(14.0);
+    // Every symbol drawn outside plain text. Many arrows and checkmarks
+    // (→ ✓ ✔ ▶) are NOT in egui's default fonts and render as boxes.
+    let src = [include_str!("mod.rs"), include_str!("board.rs")].concat();
+    let used: String = src.chars().filter(|c| !c.is_ascii()).collect();
+    let missing: String = used.chars().filter(|c| !ctx.fonts_mut(|f| f.has_glyph(&font, *c))).collect();
+    assert!(missing.is_empty(), "default fonts lack: {missing}");
+}
