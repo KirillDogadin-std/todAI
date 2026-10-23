@@ -2,6 +2,7 @@
 name = "todai"
 version = "0.1.0"
 edition = "2024"
+description = "A native board where coding agents post decisions and manual todos for the operator"
 
 [dependencies]
 anyhow = "1.0.104"

@@ -1,100 +1,99 @@
 # todai
 
-Decision & operator-todo board for agent workflows. Agents post decisions and
-manual todos to an append-only JSONL log through the `todai` CLI; you answer
-them in a small native window, and the agent picks the answers up.
+A small native board where your coding agent puts **decisions it needs from
+you** and **things only you can do by hand**, so they stop scrolling past in
+chat. You answer in the window; the agent picks the answers up without being
+interrupted.
+
+- **Native and light:** Rust + egui, one ~10 MB binary, ~40–55 MB of memory (PSS).
+- **Keyboard first, mouse friendly:** vim-style navigation, a selection mode
+  for asking "what does *this* part mean?", and a mouse mode with no
+  single-key surprises.
+- **Agent agnostic and opt-in:** works with Claude Code, pi, Codex, OpenCode,
+  or anything with a shell. Nothing is installed or active until you ask.
+- **Plain data:** each board is an append-only JSONL file you can read, grep,
+  or commit.
+
+## Install
 
 ```sh
-todai board.jsonl                     # open the board (new tab if the window is running)
-todai                                 # raise the window, or start it with last session's tabs
-todai tabs                            # list open tabs
-todai add-decision board.jsonl "Use X or Y?" -o X -o Y -c "context"
-todai add-todo board.jsonl "Create the GitHub repo"
-todai inbox board.jsonl               # agent: read and ack operator answers
-todai wait board.jsonl                # agent: block until the operator answers
-todai show board.jsonl                # text view of the board
+git clone <this repo> && cd todai
+cargo install --path .
 ```
 
-See `todai --help` for the full command list and `docs/PLAN.md` for the design.
+Linux (Wayland or X11). Needs a stable Rust toolchain; the repo pins `stable`.
 
-## Use it from your coding agent
+## Use it with your agent
 
 ```sh
 todai setup
 ```
 
-Pick your agents and where to install (this project only, or your user). It
-lists every file it will write or change and asks first; `todai setup --remove`
-undoes exactly that (files you edited since are kept). Scripted:
-`todai setup --agent claude,pi --scope project --yes`.
+Choose your agents and where to install (this project only, or every project).
+Setup lists every file it will write or change and asks first.
+`todai setup --remove` undoes exactly that.
 
-Nothing is active until you ask for it: in a session, tell the agent to
-**"use todai"**. It runs `todai attach`, which creates `.todai/board.jsonl` at
-the repo root and opens it, and from then on routes its questions and manual
-steps to the board.
+Then, in a session, tell your agent **"use todai"**. It runs `todai attach`,
+which creates `.todai/board.jsonl` at the repo root and opens the window, and
+from then on sends its questions and manual steps to the board.
 
-| Agent | Installed | How your answers reach it |
+| Agent | What setup installs | How your answers reach the agent |
 |---|---|---|
-| Claude Code | skill in `.claude/skills`, hooks in `.claude/settings.local.json` (project) or `~/.claude/settings.json` (user) | injected after its next tool call; it can't finish while answers are unread, and is reminded to leave a background `todai wait` running |
-| pi | skill in `.agents/skills`, extension in `.pi/extensions` or `~/.pi/agent/extensions` | steers the running agent, or starts a turn if it is idle |
-| Others (Codex, OpenCode, ...) | skill in `.agents/skills` | the agent checks `todai inbox` between steps and waits with `todai wait` |
+| Claude Code | a skill and two hooks | injected after its next tool call; it cannot finish while answers are unread |
+| pi | a skill and an extension | steers the running agent, or starts a turn when it is idle |
+| Codex, OpenCode, others | a skill in `.agents/skills` | the agent checks `todai inbox` between steps, `todai wait` when blocked |
 
-Any agent with a shell works without setup too: tell it to run `todai guide`.
-The protocol text ships inside the binary, so upgrading todai never needs a
-re-setup.
+No setup at all? Any agent with a shell can use todai: tell it to run
+`todai guide`. Details: [docs/agents.md](docs/agents.md).
 
-## Window
-
-One window, one tab per file. The first `todai FILE` starts the window in the
-background (it outlives the terminal or agent shell that started it); later
-calls hand their file to it over `$XDG_RUNTIME_DIR/todai.sock`, opening a tab
-or switching to it. Open tabs are restored on the next start
-(`~/.local/state/todai/session.json`). Window errors go to
-`~/.local/state/todai/gui.log`; `todai open --foreground FILE` runs it attached
-instead.
-
-- Left column: accordion with **Pending** (decisions, todos) and **Done**.
-- Elaborations get their own right column once the window fits 120 characters
-  of body text; narrower windows show them as an accordion section instead.
-
-### Input modes
-
-Mouse works in both modes. **vim** mode (default) adds single-key commands;
-**mouse** mode turns them off so stray letters do nothing. Switch with
-`Ctrl+Shift+M` or the `vim`/`mouse` button. `?` or `F1` shows every key.
-
-| Normal mode | |
-|---|---|
-| `j k` `↓ ↑` · `gg G` · `[ ]` · `Ctrl+d/u` | move · first/last · sections · ×5 |
-| `h l` `← →` | collapse/expand section, switch to/from the elaborations column |
-| `Enter` `i` `a` | answer the item, toggle a section, or jump from an elaboration to its item |
-| `1-9` | pick option N (then `Enter`) |
-| `x` | todo done/undone, reopen a resolved decision |
-| `e` | elaborate on the whole item |
-| `v` / `V` | select text (visual mode) / select all |
-| `gt gT` · `za` | tabs · toggle section |
-
-Visual mode: `h l w b e 0 ^ $ j k gg G` move the caret, `v` sets or drops the
-anchor, `o` swaps ends, `Enter` opens the elaborate prompt for the selection
-(or the word under the caret), `Esc` cancels.
-
-When typing (answers, notes, the elaborate message): `Enter` submits,
-`Shift+Enter` adds a newline, `Esc` returns to normal mode.
-
-Anywhere: `Ctrl+Tab`/`Ctrl+1..9` tabs, `Ctrl+W` or a tab's `×` closes it, `Ctrl+Q` or **Quit** closes the window (asks first), `Ctrl+Shift+L`
-dark/light (both saved in `~/.config/todai/config.json`), `Ctrl +/-` zoom.
-
-With the mouse: select text in any item, then press `Enter`, right-click →
-**Elaborate on selection**, or click **Elaborate**. With no selection those
-elaborate on the whole item. **Follow up** asks about an answered elaboration.
-
-## Memory on multi-vendor GL systems
-
-libglvnd loads every installed EGL vendor. On an NVIDIA machine that also has
-Mesa installed, Mesa pulls in libLLVM (~45MB RSS). Restrict it with:
+## Use the board
 
 ```sh
-export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+todai FILE              # open a board (a new tab if the window is already open)
+todai                   # raise the window, or reopen last session's tabs
+examples/demo.sh        # a populated demo board to play with
 ```
 
-Measured (release build, one tab): ~38MB PSS with NVIDIA only, ~54MB with both.
+| | |
+|---|---|
+| Answer a decision | type in its field (or press `1`–`9` for an option), `Enter` |
+| Finish a todo | **Done**, or `x`; add an optional note for the agent |
+| Ask what something means | select the text (mouse, or `v`), then `Enter` / right-click / **Elaborate**; add a message |
+| Change your mind | **Reopen** a decision or **Undo** a todo in *Done* |
+
+The window shows *Pending* and *Done* as collapsible sections; elaborations
+get their own column when the window is wide enough. `?` shows every key.
+Full reference: [docs/keyboard.md](docs/keyboard.md).
+
+## Commands
+
+| | |
+|---|---|
+| `todai open [FILE...]` | open boards in the window (`--foreground` to run attached) |
+| `todai tabs` | list open tabs |
+| `todai setup` | install agent integrations (`--agent`, `--scope`, `--dry-run`, `--remove`) |
+| `todai attach [NAME]` | *agent*: start using `.todai/NAME.jsonl` and print its path |
+| `todai guide` | *agent*: print the protocol |
+| `todai add-decision BOARD TITLE [-c CONTEXT] [-o OPTION]...` | *agent*: ask |
+| `todai add-todo BOARD TITLE [-c CONTEXT]` | *agent*: hand over a manual step |
+| `todai inbox BOARD` / `todai wait BOARD` | *agent*: read new answers / block until there are some |
+| `todai elaborate BOARD rN [TEXT\|-]` | *agent*: answer an elaboration request |
+| `todai withdraw BOARD dN` | *agent*: drop a decision |
+| `todai show BOARD [--json]` | print the board |
+| `todai resolve`, `reopen`, `done`, `undone`, `ask` | the operator's actions, from a shell |
+
+## Files
+
+| Path | What |
+|---|---|
+| `.todai/NAME.jsonl` | a board (one per workflow); gitignore it or commit it as a decision record |
+| `~/.config/todai/config.json` | theme and input mode |
+| `~/.local/state/todai/` | open tabs, setup records, hook state, window log |
+| `$XDG_RUNTIME_DIR/todai.sock` | the running window's socket |
+
+## Docs
+
+- [docs/agents.md](docs/agents.md): how agent integration works, per agent
+- [docs/keyboard.md](docs/keyboard.md): every key and mouse action
+- [docs/board-format.md](docs/board-format.md): the event log
+- [docs/architecture.md](docs/architecture.md): how the code fits together
