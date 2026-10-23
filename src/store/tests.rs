@@ -154,3 +154,13 @@ fn trash_removes_finished_items_and_keeps_ids_unique() {
     // The agent is never told about trashing.
     assert!(unprocessed(&ev, &s).iter().all(|e| !matches!(e.kind, Kind::Trash { .. })));
 }
+
+#[test]
+fn todo_json_distinguishes_done_without_note() {
+    let (_d, log) = tmp_log();
+    log.append(Actor::Agent, |s| Ok(Kind::TodoAdd { id: s.next_todo_id(), title: "a".into(), context: None })).unwrap();
+    let v = |log: &Log| serde_json::to_value(&log.load_state().unwrap().1.todos[0]).unwrap();
+    assert_eq!(v(&log)["done"], false);
+    log.append(Actor::Operator, |_| Ok(Kind::TodoDone { id: "t1".into(), note: None })).unwrap();
+    assert_eq!((v(&log)["done"].clone(), v(&log)["note"].clone()), (serde_json::json!(true), serde_json::Value::Null));
+}

@@ -23,13 +23,28 @@ pub struct Decision {
     pub status: DecisionStatus,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct Todo {
     pub id: String,
     pub title: String,
     pub context: Option<String>,
     /// `Some(note)` once done; the inner option is the operator's optional note.
     pub done: Option<Option<String>>,
+}
+
+// As `{.., "done": bool, "note": ..}`: a derived `Option<Option<_>>` would
+// print `null` for both "not done" and "done without a note".
+impl Serialize for Todo {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut t = s.serialize_struct("Todo", 5)?;
+        t.serialize_field("id", &self.id)?;
+        t.serialize_field("title", &self.title)?;
+        t.serialize_field("context", &self.context)?;
+        t.serialize_field("done", &self.done.is_some())?;
+        t.serialize_field("note", &self.done.clone().flatten())?;
+        t.end()
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
