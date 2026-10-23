@@ -12,7 +12,7 @@ gitignored symlink: `ln -s AGENTS.md CLAUDE.md`.
 cargo build                 # toolchain pinned to stable via rust-toolchain.toml
 cargo test                  # store, vim motions, IPC, setup merge, headless GUI tests
 cargo build --release       # use this binary for memory or startup measurements
-examples/demo.sh            # populated demo board in a real window
+examples/demo.sh            # populated demo board in a real window (--no-open: just build it)
 ```
 
 Keep `cargo build` warning-free and `cargo test` green before committing.
