@@ -180,7 +180,7 @@ impl Board<'_> {
                 });
             }
             ui.horizontal(|ui| {
-                let buttons_w = 170.0;
+                let buttons_w = 225.0;
                 let draft = b.drafts.entry(d.id.clone()).or_default();
                 let edit = TextEdit::multiline(draft)
                     .desired_rows(1)
@@ -203,7 +203,7 @@ impl Board<'_> {
         self.card(ui, &focus, |b, ui| {
             let selected = b.item_header(ui, &t.id, &focus);
             ui.horizontal(|ui| {
-                let buttons_w = 170.0;
+                let buttons_w = 225.0;
                 let note = b.drafts.entry(t.id.clone()).or_default();
                 let edit = TextEdit::singleline(note)
                     .hint_text("note for the agent (optional)")
@@ -388,6 +388,7 @@ impl Board<'_> {
         }
     }
 
+    /// Elaborate and Zoom, the item card buttons every card has.
     fn elaborate_button(&mut self, ui: &mut Ui, focus: &Focus, selected: Option<String>) {
         let hover = match selected {
             Some(_) => "Elaborate on the selected text (Enter · right-click)",
@@ -395,6 +396,11 @@ impl Board<'_> {
         };
         if ui.small_button("Elaborate").on_hover_text(hover).clicked() {
             self.elaborate(focus, selected);
+        }
+        if let Focus::Item(id) = focus
+            && ui.small_button("Zoom").on_hover_text("Open large (K)").clicked()
+        {
+            self.nav.open_zoom(id);
         }
     }
 
@@ -618,5 +624,59 @@ pub fn turn(ui: &mut Ui, md: &mut CommonMarkCache, state: &State, r: &Elab) {
                 ui.weak("waiting for the agent's answer");
             });
         }
+    }
+}
+
+/// An item in the zoom overlay: its title, status, context rendered as
+/// markdown, options, and the elaboration threads about it.
+pub fn item_zoom(ui: &mut Ui, md: &mut CommonMarkCache, state: &State, id: &str) {
+    ui.add(Label::new(RichText::new(item_title(state, id)).heading()).wrap());
+    let status = match (state.decision(id), state.todo(id)) {
+        (Some(d), _) => match &d.status {
+            DecisionStatus::Pending => "decision · pending".to_owned(),
+            DecisionStatus::Resolved { text, .. } => format!("decision · resolved: {text}"),
+            DecisionStatus::Withdrawn => "decision · withdrawn by the agent".to_owned(),
+        },
+        (_, Some(t)) => match &t.done {
+            None => "todo · pending".to_owned(),
+            Some(None) => "todo · done".to_owned(),
+            Some(Some(n)) => format!("todo · done: {n}"),
+        },
+        _ => return,
+    };
+    ui.add(Label::new(RichText::new(status).weak()).wrap());
+    let (context, options) = match (state.decision(id), state.todo(id)) {
+        (Some(d), _) => (d.context.as_deref(), d.options.as_slice()),
+        (_, Some(t)) => (t.context.as_deref(), &[][..]),
+        _ => (None, &[][..]),
+    };
+    if let Some(c) = context {
+        ui.add_space(6.0);
+        ui.push_id(("ctx", id), |ui| CommonMarkViewer::new().show(ui, md, c));
+    }
+    if !options.is_empty() {
+        ui.add_space(6.0);
+        subheading(ui, "Options");
+        for (i, o) in options.iter().enumerate() {
+            ui.add(Label::new(format!("{}. {o}", i + 1)).wrap());
+        }
+    }
+    let mut threads = state.threads();
+    threads.retain(|t| t[0].target == id);
+    if threads.is_empty() {
+        return;
+    }
+    ui.add_space(6.0);
+    subheading(ui, "Elaborations");
+    for thread in threads.iter().rev() {
+        ui.group(|ui| {
+            ui.set_width(ui.available_width());
+            for (i, r) in thread.iter().enumerate() {
+                if i > 0 {
+                    ui.separator();
+                }
+                turn(ui, md, state, r);
+            }
+        });
     }
 }

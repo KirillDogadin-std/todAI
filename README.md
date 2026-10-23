@@ -72,7 +72,7 @@ examples/demo.sh        # a populated demo board to play with
 | Answer a decision | type in its field (or press `1`–`9` for an option), `Enter` |
 | Finish a todo | **Done**, or `x`; add an optional note for the agent |
 | Ask what something means | select the text (mouse, or `v`), then `Enter` / right-click / **Elaborate**; add a message |
-| Read a long answer | **Zoom** on the elaboration, double-click it, or `K`: a large overlay over the dimmed board |
+| Read a long item or answer | **Zoom** on the item or elaboration (double-click an elaboration), or `K`: a large overlay over the dimmed board |
 | Change your mind | **Reopen** a decision or **Undo** a todo in *Done* |
 | Clean up | select finished items or elaborations (checkbox, shift-click for a range, or `space`), then **🗑 Delete** in the action bar (or `d`) |
 

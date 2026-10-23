@@ -122,7 +122,8 @@ pub struct Nav {
     pub mark_groups: Vec<Vec<String>>,
     /// A shift-click waiting for the frame's groups to be complete.
     range_target: Option<String>,
-    /// The elaboration shown in the zoom overlay, if open.
+    /// The item or elaboration thread (by its root) shown in the zoom
+    /// overlay, if open.
     pub zoom: Option<String>,
     /// Overlay scrolling: requested jump, and the offset it last rendered at.
     pub zoom_scroll_to: Option<f32>,
@@ -500,7 +501,7 @@ impl Nav {
                 }
             }
             '?' => out.toggle_cheatsheet = true,
-            'K' => self.zoom_at_cursor(state),
+            'K' => self.zoom_at_cursor(),
             _ => {}
         }
     }
@@ -639,23 +640,19 @@ impl Nav {
         }
     }
 
-    /// Opens the zoom overlay on an elaboration thread (by its root).
-    pub fn open_zoom(&mut self, rid: &str) {
-        self.zoom = Some(rid.to_owned());
+    /// Opens the zoom overlay on an item, or on an elaboration thread (by
+    /// its root).
+    pub fn open_zoom(&mut self, id: &str) {
+        self.zoom = Some(id.to_owned());
         self.zoom_scroll_to = Some(0.0);
-        self.cursor = Some(Focus::Elab(rid.to_owned()));
+        self.cursor = Some(zoom_focus(id));
         self.scroll_to_cursor = true;
     }
 
-    /// `K`: zoom the elaboration under the cursor, or an item's newest one.
-    fn zoom_at_cursor(&mut self, state: &State) {
-        let rid = match &self.cursor {
-            Some(Focus::Elab(rid)) => Some(rid.clone()),
-            Some(Focus::Item(id)) => state.threads().into_iter().find(|t| &t[0].target == id).map(|t| t[0].rid.clone()),
-            _ => None,
-        };
-        if let Some(rid) = rid {
-            self.open_zoom(&rid);
+    /// `K`: zoom the item or thread under the cursor.
+    fn zoom_at_cursor(&mut self) {
+        if let Some(Focus::Item(id) | Focus::Elab(id)) = self.cursor.clone() {
+            self.open_zoom(&id);
         }
     }
 
@@ -698,8 +695,8 @@ impl Nav {
                         (_, 'p') => self.zoom_step(state, -1),
                         (_, 'q') => self.zoom = None,
                         (_, 'e') => {
-                            if let Some(root) = self.zoom.take() {
-                                self.follow_up(state, &Focus::Elab(root));
+                            if let Some(id) = self.zoom.take() {
+                                self.follow_up(state, &zoom_focus(&id));
                             }
                         }
                         (_, '?') => out.toggle_cheatsheet = true,
@@ -713,11 +710,16 @@ impl Nav {
         }
     }
 
-    /// `n` / `p` in the overlay: the next / previous thread in display
-    /// order (newest activity first).
+    /// `n` / `p` in the overlay: the next / previous item as the left column
+    /// shows them, or thread in display order (newest activity first).
     pub fn zoom_step(&mut self, state: &State, d: isize) {
-        let order: Vec<&str> = state.threads().into_iter().map(|t| t[0].rid.as_str()).collect();
-        let Some(i) = self.zoom.as_deref().and_then(|z| order.iter().position(|r| *r == z)) else { return };
+        let order: Vec<String> = match self.zoom.as_deref().map(zoom_focus) {
+            Some(Focus::Item(_)) => {
+                self.left.iter().filter_map(|f| if let Focus::Item(id) = f { Some(id.clone()) } else { None }).collect()
+            }
+            _ => state.threads().into_iter().map(|t| t[0].rid.clone()).collect(),
+        };
+        let Some(i) = self.zoom.as_deref().and_then(|z| order.iter().position(|r| r == z)) else { return };
         let j = (i as isize + d).clamp(0, order.len() as isize - 1) as usize;
         let next = order[j].to_owned();
         self.open_zoom(&next);
@@ -943,6 +945,11 @@ impl Nav {
             _ => {}
         }
     }
+}
+
+/// What a zoomed id is: elaborations are `rN`, items `dN` / `tN`.
+pub fn zoom_focus(id: &str) -> Focus {
+    if id.starts_with('r') { Focus::Elab(id.to_owned()) } else { Focus::Item(id.to_owned()) }
 }
 
 /// Default fold state of a thread (by its root): open while a turn is

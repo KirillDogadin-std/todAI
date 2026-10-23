@@ -45,7 +45,7 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("d", "remove marked items, or this one, from the board"),
             ("o  za", "on an elaboration thread: expand / collapse it"),
             ("zR  zM", "expand / collapse all elaborations (or the selected ones)"),
-            ("K", "zoom: open a thread large (on an item: its newest)"),
+            ("K", "zoom: open the item or thread large"),
             ("Esc", "clear the selection"),
             ("e", "elaborate on the whole item; on a thread, follow up"),
             ("v  V", "select text / select all (visual)"),
@@ -67,13 +67,13 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
-        "Zoom (elaboration overlay)",
+        "Zoom (overlay)",
         &[
             ("j k  Down Up", "scroll"),
             ("Ctrl+d  Ctrl+u", "scroll a page (also PageDown / PageUp)"),
             ("gg  G", "top / bottom"),
-            ("n  p", "next / previous thread"),
-            ("e", "follow up on this answer"),
+            ("n  p", "next / previous item or thread"),
+            ("e", "elaborate on the item / follow up on the thread"),
             ("Esc  q", "close (or click outside)"),
         ],
     ),
@@ -601,22 +601,36 @@ fn status_bar(ui: &mut egui::Ui, tab: &Tab, vim: bool) {
     });
 }
 
-/// The zoomed elaboration: a large panel over a dimmed board that fades in,
-/// like Arc's Peek. Keys are handled in `Nav::on_zoom_event`.
+/// The zoomed item or elaboration thread: a large panel over a dimmed board
+/// that fades in, like Arc's Peek. Keys are handled in `Nav::on_zoom_event`.
 fn zoom_overlay(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache) {
     let ctx = ui.ctx().clone();
     // Animated every frame, so each opening fades in from zero.
     let t = ctx.animate_bool_with_time(egui::Id::new("zoom-fade"), tab.nav.zoom.is_some(), 0.15);
-    let Some(rid) = tab.nav.zoom.clone() else { return };
+    let Some(id) = tab.nav.zoom.clone() else { return };
     let (state, nav) = (&tab.state, &mut tab.nav);
-    let thread = state.thread(&rid);
-    let (Some(&r), Some(&newest)) = (thread.first(), thread.last()) else {
+    let focus = nav::zoom_focus(&id);
+    let is_item = matches!(focus, nav::Focus::Item(_));
+    let thread = state.thread(&id);
+    let (target, can_follow_up) = if is_item {
+        (id.clone(), true)
+    } else {
+        match (thread.first(), thread.last()) {
+            (Some(r), Some(newest)) => (r.target.clone(), newest.answer.is_some()),
+            _ => (String::new(), false),
+        }
+    };
+    if state.decision(&target).is_none() && state.todo(&target).is_none() {
         nav.zoom = None; // trashed while open
         return;
+    }
+    let order: Vec<String> = if is_item {
+        nav.left.iter().filter_map(|f| if let nav::Focus::Item(i) = f { Some(i.clone()) } else { None }).collect()
+    } else {
+        state.threads().into_iter().map(|t| t[0].rid.clone()).collect()
     };
-    let order: Vec<String> = state.threads().into_iter().map(|t| t[0].rid.clone()).collect();
-    let index = order.iter().position(|x| *x == rid).unwrap_or(0);
-    let title = board::item_title(state, &r.target);
+    let index = order.iter().position(|x| *x == id).unwrap_or(0);
+    let title = board::item_title(state, &target);
     let screen = ctx.content_rect();
     let width = (screen.width() * 0.8).clamp(280.0, 1100.0);
     let body_height = (screen.height() * 0.85 - 150.0).max(80.0);
@@ -628,21 +642,25 @@ fn zoom_overlay(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache) {
             ui.multiply_opacity(t);
             ui.set_width(width);
             ui.horizontal(|ui| {
-                ui.label(RichText::new(&r.rid).monospace().weak());
-                ui.label(RichText::new(format!("on {}", r.target)).monospace().weak());
+                ui.label(RichText::new(&id).monospace().weak());
+                if !is_item {
+                    ui.label(RichText::new(format!("on {target}")).monospace().weak());
+                }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     close = ui.button("×").on_hover_text("Close (Esc)").clicked();
                     step += i32::from(ui.add_enabled(index + 1 < order.len(), egui::Button::new("Next")).on_hover_text("n").clicked());
                     step -= i32::from(ui.add_enabled(index > 0, egui::Button::new("Prev")).on_hover_text("p").clicked());
                     ui.weak(format!("{} / {}", index + 1, order.len()));
-                    ui.add(egui::Label::new(RichText::new(title).strong()).truncate());
+                    if !is_item {
+                        ui.add(egui::Label::new(RichText::new(title).strong()).truncate());
+                    }
                 });
             });
             ui.separator();
-            // Fixed height: short answers leave empty space instead of the
-            // panel shrinking and jumping around as you step through them.
+            // Fixed height: short content leaves empty space instead of the
+            // panel shrinking and jumping around as you step through.
             let mut scroll = egui::ScrollArea::vertical()
-                .id_salt(("zoom", &rid))
+                .id_salt(("zoom", &id))
                 .min_scrolled_height(body_height)
                 .max_height(body_height)
                 .auto_shrink(false);
@@ -651,21 +669,26 @@ fn zoom_overlay(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache) {
             }
             let out = scroll.show(ui, |ui| {
                 ui.push_id("zoom-md", |ui| {
-                    for (i, t) in thread.iter().enumerate() {
-                        if i > 0 {
-                            ui.separator();
+                    if is_item {
+                        board::item_zoom(ui, md, state, &id);
+                    } else {
+                        for (i, t) in thread.iter().enumerate() {
+                            if i > 0 {
+                                ui.separator();
+                            }
+                            board::turn(ui, md, state, t);
                         }
-                        board::turn(ui, md, state, t);
                     }
                 });
             });
             nav.zoom_offset = out.state.offset.y;
             ui.separator();
             ui.horizontal(|ui| {
-                if newest.answer.is_some() {
-                    follow_up = ui.button("Follow up").on_hover_text("e").clicked();
+                let (label, hint) = if is_item { ("Elaborate", "e elaborate") } else { ("Follow up", "e follow up") };
+                if can_follow_up {
+                    follow_up = ui.button(label).on_hover_text("e").clicked();
                 }
-                ui.weak("j k scroll · n p next / previous · e follow up · Esc close");
+                ui.weak(format!("j k scroll · n p next / previous · {hint} · Esc close"));
             });
         });
     if close || modal.should_close() {
@@ -674,7 +697,7 @@ fn zoom_overlay(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache) {
         nav.zoom_step(state, step as isize);
     } else if follow_up {
         nav.zoom = None;
-        nav.follow_up(state, &nav::Focus::Elab(rid));
+        nav.follow_up(state, &focus);
     }
 }
 

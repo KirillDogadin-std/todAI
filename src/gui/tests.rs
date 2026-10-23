@@ -457,9 +457,9 @@ fn zr_zm_fold_selected_or_all_and_esc_clears_selection() {
 #[test]
 fn zoom_overlay_keyboard_flow() {
     let mut h = harness_with_elabs(); // display order: r3, r2, r1
-    h.move_to(item("d2"));
+    h.move_to(Focus::Elab("r3".into()));
     h.type_keys("K");
-    assert_eq!(h.tab.nav.zoom.as_deref(), Some("r3"), "K on an item zooms its newest elaboration");
+    assert_eq!(h.tab.nav.zoom.as_deref(), Some("r3"));
 
     let cursor = h.cursor();
     h.type_keys("j"); // scrolls the overlay, not the board
@@ -569,4 +569,22 @@ fn follow_up_joins_the_thread_and_renders_as_one_card() {
     h.key(Key::Enter, Modifiers::NONE);
     let p = h.tab.nav.prompt.as_ref().expect("prompt open");
     assert_eq!((p.parent.as_deref(), p.selection.as_str()), (Some("r4"), "zebra"));
+}
+
+#[test]
+fn zoom_on_items_steps_through_the_left_column() {
+    let mut h = harness_with_elabs(); // left column: d2, t1 pending; d1 done (collapsed)
+    h.move_to(item("d2"));
+    h.type_keys("K");
+    assert_eq!(h.tab.nav.zoom.as_deref(), Some("d2"), "K on an item zooms the item");
+    h.frame(vec![]);
+    assert!(h.ctx.memory(|m| m.area_rect(egui::Id::new("zoom"))).is_some(), "overlay shown");
+    h.type_keys("n");
+    assert_eq!(h.tab.nav.zoom.as_deref(), Some("t1"), "n goes to the next item");
+    h.type_keys("p");
+    assert_eq!(h.tab.nav.zoom.as_deref(), Some("d2"));
+    h.type_keys("e");
+    assert!(h.tab.nav.zoom.is_none(), "e closes the overlay");
+    let p = h.tab.nav.prompt.as_ref().expect("elaborates on the whole item");
+    assert_eq!((p.target.as_str(), p.parent.as_deref()), ("d2", None));
 }

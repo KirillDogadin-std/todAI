@@ -29,7 +29,7 @@ The status bar shows the current state: `NORMAL`, `INSERT`, `VISUAL`,
 | `Esc` | clear the selection |
 | `o` · `za` | on an elaboration thread: expand / collapse it (`zo` / `zc` too) |
 | `zR` · `zM` | expand / collapse all elaborations, or only the selected ones |
-| `K` | zoom: open an elaboration thread in the overlay (on an item: its most recently active thread) |
+| `K` | zoom: open the item or elaboration thread under the cursor in the overlay |
 | `e` | elaborate on the whole item; on a thread, follow up on its newest answer |
 | `v` · `V` | select text in the item (visual mode) / select all of it |
 | `za` · `space` | toggle the section (`zo` open, `zc` close) |
@@ -51,9 +51,10 @@ like moving the cursor in vim before pressing `v`.
 | `Enter` | elaborate on the selection (on the word under the caret if none) |
 | `Esc` | cancel |
 
-## Zoom (elaboration overlay)
+## Zoom (overlay)
 
-A large panel over the dimmed board for reading long answers. It owns the
+A large panel over the dimmed board for reading an item (title, status,
+context as markdown, options, its elaboration threads) or a long thread. It owns the
 keyboard while open; arrows, PageUp/PageDown, Home/End and `Esc` also work in
 mouse mode.
 
@@ -62,8 +63,8 @@ mouse mode.
 | `j` `k` · `Down` `Up` | scroll |
 | `Ctrl+d` · `Ctrl+u` · `PageDown` · `PageUp` | scroll a page |
 | `gg` · `G` · `Home` · `End` | top / bottom |
-| `n` · `p` | next / previous thread |
-| `e` | follow up on the thread's newest answer |
+| `n` · `p` | next / previous item (as the left column lists them) or thread |
+| `e` | elaborate on the item / follow up on the thread's newest answer |
 | `Esc` · `q` | close (clicking outside closes too) |
 
 ## Typing
@@ -105,6 +106,8 @@ Answer fields, todo notes and the elaboration message:
 - While anything is selected, an **action bar** at the bottom offers
   **🗑 Delete** (asks first), **Expand** / **Collapse** for the selected
   elaborations, and **Deselect all**.
+- **Zoom** on an item card opens the item in the overlay, with **Prev** /
+  **Next**, **Elaborate** and **×**.
 - **Elaborations** fold: **more** / **less**, or click a collapsed preview.
   **Zoom** (or double-click the card) opens one in the overlay, with
   **Prev** / **Next**, **Follow up** and **×**.
