@@ -144,6 +144,9 @@ enum Cmd {
         selection: String,
         #[arg(short, long)]
         note: Option<String>,
+        /// The elaboration (rN) this follows up on.
+        #[arg(short, long)]
+        parent: Option<String>,
     },
 }
 
@@ -276,9 +279,9 @@ pub fn run(cli: Cli) -> Result<()> {
         Cmd::Undone { file, id } => {
             log(&file)?.append(Actor::Operator, |_| Ok(Kind::TodoUndone { id }))?;
         }
-        Cmd::Ask { file, target, selection, note } => {
+        Cmd::Ask { file, target, selection, note, parent } => {
             let e = log(&file)?.append(Actor::Operator, |s| {
-                Ok(Kind::ElabRequest { rid: s.next_elab_id(), target, selection, note })
+                Ok(Kind::ElabRequest { rid: s.next_elab_id(), target, selection, note, parent })
             })?;
             print_id(&e.kind);
         }
@@ -394,13 +397,22 @@ fn render(s: &State) -> String {
             out.push('\n');
         }
     };
+    // Threads in board order; follow-ups indented under their thread's first request.
     let elabs_for = |id: &str| -> Vec<String> {
-        s.elabs
-            .iter()
-            .filter(|r| r.target == id)
-            .map(|r| match &r.answer {
-                Some(a) => format!("    > [{}] \"{}\": {}", r.rid, r.selection, a.trim()),
-                None => format!("    > [{}] \"{}\": (waiting for agent)", r.rid, r.selection),
+        let mut threads = s.threads();
+        threads.retain(|t| t[0].target == id);
+        threads.reverse();
+        threads
+            .into_iter()
+            .flat_map(|t| t.into_iter().enumerate())
+            .map(|(i, r)| {
+                let about = match &r.parent {
+                    Some(p) => crate::inbox::quote(&r.selection, s.elab(p).and_then(|p| p.answer.as_deref()), p),
+                    None => format!("\"{}\"", r.selection),
+                };
+                let indent = if i == 0 { "    > " } else { "      >> " };
+                let answer = r.answer.as_deref().map_or("(waiting for agent)", str::trim);
+                format!("{indent}[{}] {about}: {answer}", r.rid)
             })
             .collect()
     };

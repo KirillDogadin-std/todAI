@@ -19,6 +19,25 @@ pub fn summarize(file: &Path, log: &[Event], events: &[&Event]) -> String {
             })
             .unwrap_or("?")
     };
+    let answer = |rid: &str| {
+        log.iter().rev().find_map(|e| match &e.kind {
+            Kind::ElabAdd { rid: r, text_md } if r == rid => Some(text_md.as_str()),
+            _ => None,
+        })
+    };
+    let parent = |rid: &str| {
+        log.iter().find_map(|e| match &e.kind {
+            Kind::ElabRequest { rid: r, parent, .. } if r == rid => Some(parent.clone()),
+            _ => None,
+        })?
+    };
+    let root = |rid: &str| {
+        let mut cur = rid.to_owned();
+        while let Some(p) = parent(&cur) {
+            cur = p;
+        }
+        cur
+    };
     let mut out = format!("todai: operator updates in {f}\n");
     for e in events {
         let line = match &e.kind {
@@ -33,7 +52,20 @@ pub fn summarize(file: &Path, log: &[Event], events: &[&Event]) -> String {
                 None => format!("- {id} \"{}\" done", title(id)),
             },
             Kind::TodoUndone { id } => format!("- {id} \"{}\" marked NOT done again", title(id)),
-            Kind::ElabRequest { rid, target, selection, note } => {
+            Kind::ElabRequest { rid, target, selection, note, parent: Some(p) } => {
+                let mut l = format!(
+                    "- {rid}: operator follows up in thread {} on {target} \"{}\", replying to {p}; {}",
+                    root(p),
+                    title(target),
+                    quote(selection, answer(p), p)
+                );
+                if let Some(n) = note {
+                    l.push_str(&format!("; note: {n}"));
+                }
+                l.push_str(&format!("\n  answer with: todai elaborate {f} {rid} - <<'EOF' ... EOF"));
+                l
+            }
+            Kind::ElabRequest { rid, target, selection, note, parent: None } => {
                 let mut l = format!(
                     "- {rid}: operator asks to elaborate on {target} \"{}\"; selected text: \"{selection}\"",
                     title(target)
@@ -50,4 +82,16 @@ pub fn summarize(file: &Path, log: &[Event], events: &[&Event]) -> String {
         out.push('\n');
     }
     out
+}
+
+/// How a follow-up's selection is shown: the agent wrote the parent answer, so
+/// quoting all of it back is noise.
+pub fn quote(selection: &str, parent_answer: Option<&str>, parent: &str) -> String {
+    const MAX: usize = 120;
+    if parent_answer.is_some_and(|a| a.trim() == selection.trim()) {
+        return format!("about the whole of {parent}'s answer");
+    }
+    let short: String = selection.chars().take(MAX).collect();
+    let more = if selection.chars().count() > MAX { "…" } else { "" };
+    format!("selected text: \"{short}{more}\"")
 }

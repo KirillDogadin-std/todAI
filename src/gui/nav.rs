@@ -74,6 +74,8 @@ pub struct MouseSelection {
 /// An elaboration request being written.
 pub struct Prompt {
     pub target: String,
+    /// The elaboration this follows up on, if any.
+    pub parent: Option<String>,
     pub selection: String,
     pub note: String,
 }
@@ -187,10 +189,15 @@ pub fn item_parts(state: &State, focus: &Focus) -> Vec<(String, Weight)> {
                 Vec::new()
             }
         }
-        Focus::Elab(rid) => match state.elab(rid) {
-            Some(r) => vec![(r.answer.clone().unwrap_or_else(|| r.selection.clone()), Weight::Normal)],
-            None => Vec::new(),
-        },
+        // A thread card reads as its turns' answers in order.
+        Focus::Elab(root) => {
+            let turns: Vec<&str> = state
+                .thread(root)
+                .into_iter()
+                .map(|r| r.answer.as_deref().unwrap_or(&r.selection).trim())
+                .collect();
+            if turns.is_empty() { Vec::new() } else { vec![(turns.join("\n\n"), Weight::Normal)] }
+        }
         Focus::Section(_) => Vec::new(),
     }
 }
@@ -199,11 +206,19 @@ pub fn item_text(state: &State, focus: &Focus) -> String {
     item_parts(state, focus).into_iter().map(|(s, _)| s).collect()
 }
 
-/// The item an elaboration about `focus` should target.
-pub fn elab_target(state: &State, focus: &Focus) -> Option<String> {
+/// The item an elaboration of `selection` in `focus` should target, and on
+/// a thread card the turn it follows up on: the newest one whose answer holds
+/// the selection, else the newest.
+pub fn elab_target(state: &State, focus: &Focus, selection: &str) -> Option<(String, Option<String>)> {
     match focus {
-        Focus::Item(id) => Some(id.clone()),
-        Focus::Elab(rid) => state.elab(rid).map(|r| r.target.clone()),
+        Focus::Item(id) => Some((id.clone(), None)),
+        Focus::Elab(root) => {
+            let thread = state.thread(root);
+            let newest = thread.last()?;
+            let holds = |r: &&&crate::store::Elab| r.answer.as_deref().is_some_and(|a| a.contains(selection.trim()));
+            let parent = thread.iter().rev().find(holds).unwrap_or(&newest);
+            Some((parent.target.clone(), Some(parent.rid.clone())))
+        }
         Focus::Section(_) => None,
     }
 }
@@ -226,10 +241,10 @@ impl Nav {
         self.scroll_to_cursor = true;
     }
 
-    pub fn open_prompt(&mut self, target: String, selection: String) {
+    pub fn open_prompt(&mut self, (target, parent): (String, Option<String>), selection: String) {
         self.visual = None;
         self.mouse_selection = None;
-        self.prompt = Some(Prompt { target, selection, note: String::new() });
+        self.prompt = Some(Prompt { target, parent, selection, note: String::new() });
         self.focus_request = Some(FocusRequest::Prompt);
     }
 
@@ -331,7 +346,7 @@ impl Nav {
         {
             match key {
                 Key::Enter => {
-                    if let Some(target) = elab_target(state, &focus) {
+                    if let Some(target) = elab_target(state, &focus, &sel) {
                         self.focus(focus);
                         self.open_prompt(target, sel.trim().to_owned());
                     }
@@ -480,11 +495,8 @@ impl Nav {
             'v' => self.start_visual(state, false),
             'V' => self.start_visual(state, true),
             'e' => {
-                if let Some(f) = self.cursor.clone()
-                    && let Some(target) = elab_target(state, &f)
-                {
-                    let text = item_text(state, &f);
-                    self.open_prompt(target, text);
+                if let Some(f) = self.cursor.clone() {
+                    self.follow_up(state, &f);
                 }
             }
             '?' => out.toggle_cheatsheet = true,
@@ -562,7 +574,7 @@ impl Nav {
         self.mode = Mode::Normal;
         let (a, b) = v.range().unwrap_or_else(|| tn::word_at(&v.text, v.caret));
         let selection: String = v.text[a..=b].iter().collect();
-        if let Some(target) = elab_target(state, &v.target) {
+        if let Some(target) = elab_target(state, &v.target, &selection) {
             self.open_prompt(target, selection.trim().to_owned());
         }
     }
@@ -612,7 +624,22 @@ impl Nav {
         }
     }
 
-    /// Opens the zoom overlay on an elaboration.
+    /// `e`: elaborate on the whole item, or on a thread card follow up on its
+    /// newest turn.
+    pub fn follow_up(&mut self, state: &State, f: &Focus) {
+        let text = match f {
+            Focus::Elab(root) => match state.thread(root).last() {
+                Some(r) => r.answer.clone().unwrap_or_else(|| r.selection.clone()),
+                None => return,
+            },
+            _ => item_text(state, f),
+        };
+        if let Some(target) = elab_target(state, f, &text) {
+            self.open_prompt(target, text.trim().to_owned());
+        }
+    }
+
+    /// Opens the zoom overlay on an elaboration thread (by its root).
     pub fn open_zoom(&mut self, rid: &str) {
         self.zoom = Some(rid.to_owned());
         self.zoom_scroll_to = Some(0.0);
@@ -624,7 +651,7 @@ impl Nav {
     fn zoom_at_cursor(&mut self, state: &State) {
         let rid = match &self.cursor {
             Some(Focus::Elab(rid)) => Some(rid.clone()),
-            Some(Focus::Item(id)) => state.elabs.iter().rev().find(|r| &r.target == id).map(|r| r.rid.clone()),
+            Some(Focus::Item(id)) => state.threads().into_iter().find(|t| &t[0].target == id).map(|t| t[0].rid.clone()),
             _ => None,
         };
         if let Some(rid) = rid {
@@ -671,9 +698,8 @@ impl Nav {
                         (_, 'p') => self.zoom_step(state, -1),
                         (_, 'q') => self.zoom = None,
                         (_, 'e') => {
-                            if let Some(r) = self.zoom.take().and_then(|rid| state.elab(&rid)) {
-                                let about = r.answer.clone().unwrap_or_else(|| r.selection.clone());
-                                self.open_prompt(r.target.clone(), about.trim().to_owned());
+                            if let Some(root) = self.zoom.take() {
+                                self.follow_up(state, &Focus::Elab(root));
                             }
                         }
                         (_, '?') => out.toggle_cheatsheet = true,
@@ -687,10 +713,10 @@ impl Nav {
         }
     }
 
-    /// `n` / `p` in the overlay: the next / previous elaboration in display
-    /// order (newest first).
+    /// `n` / `p` in the overlay: the next / previous thread in display
+    /// order (newest activity first).
     pub fn zoom_step(&mut self, state: &State, d: isize) {
-        let order: Vec<&str> = state.elabs.iter().rev().map(|r| r.rid.as_str()).collect();
+        let order: Vec<&str> = state.threads().into_iter().map(|t| t[0].rid.as_str()).collect();
         let Some(i) = self.zoom.as_deref().and_then(|z| order.iter().position(|r| *r == z)) else { return };
         let j = (i as isize + d).clamp(0, order.len() as isize - 1) as usize;
         let next = order[j].to_owned();
@@ -712,7 +738,7 @@ impl Nav {
     /// are selected.
     pub fn fold_elabs(&mut self, state: &State, open: bool) {
         let selected: Vec<String> = self.marked.iter().filter(|id| state.elab(id).is_some()).cloned().collect();
-        let rids = if selected.is_empty() { state.elabs.iter().map(|r| r.rid.clone()).collect() } else { selected };
+        let rids = if selected.is_empty() { state.threads().into_iter().map(|t| t[0].rid.clone()).collect() } else { selected };
         for rid in rids {
             self.elab_open.insert(rid, open);
         }
@@ -770,7 +796,13 @@ impl Nav {
             if let Some(p) = self.prompt.take() {
                 let note = Some(p.note.trim().to_owned()).filter(|n| !n.is_empty());
                 // rid is reassigned under the log lock when sent.
-                out.kinds.push(Kind::ElabRequest { rid: String::new(), target: p.target, selection: p.selection, note });
+                out.kinds.push(Kind::ElabRequest {
+                    rid: String::new(),
+                    target: p.target,
+                    selection: p.selection,
+                    note,
+                    parent: p.parent,
+                });
             }
         } else if let Some(Focus::Item(id)) = &self.cursor {
             if state.decision(id).is_some() {
@@ -913,14 +945,17 @@ impl Nav {
     }
 }
 
-/// Default fold state: open while unanswered, while its item is still
-/// pending, or if it is the newest answer; older answers collapse.
-pub fn elab_auto_open(state: &State, rid: &str) -> bool {
-    let Some(r) = state.elab(rid) else { return false };
+/// Default fold state of a thread (by its root): open while a turn is
+/// unanswered, while its item is still pending, or if it holds the newest
+/// answer; older threads collapse.
+pub fn elab_auto_open(state: &State, root: &str) -> bool {
+    let Some(r) = state.elab(root) else { return false };
     let item_pending = state.decision(&r.target).is_some_and(|d| d.status == DecisionStatus::Pending)
         || state.todo(&r.target).is_some_and(|t| t.done.is_none());
-    let newest_answer = state.elabs.iter().rev().find(|e| e.answer.is_some()).is_some_and(|e| e.rid == rid);
-    r.answer.is_none() || item_pending || newest_answer
+    let newest_answer = state.elabs.iter().filter(|e| e.answer.is_some()).max_by_key(|e| e.activity);
+    let holds_newest = newest_answer.is_some_and(|e| state.thread_root(&e.rid) == root);
+    let waiting = state.thread(root).iter().any(|e| e.answer.is_none());
+    waiting || item_pending || holds_newest
 }
 
 fn take_draft(drafts: &mut HashMap<String, String>, id: &str) -> Option<String> {

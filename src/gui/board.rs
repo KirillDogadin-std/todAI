@@ -13,7 +13,7 @@ use egui::{
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 
 use super::nav::{self, Focus, FocusRequest, MouseSelection, Nav, Section, Weight};
-use crate::store::{Decision, DecisionStatus, Kind, State, Todo};
+use crate::store::{Decision, DecisionStatus, Elab, Kind, State, Todo};
 
 pub struct Board<'a> {
     pub state: &'a State,
@@ -84,7 +84,8 @@ impl Board<'_> {
         });
     }
 
-    /// `right` records the cards into the right-hand focus list.
+    /// `right` records the cards into the right-hand focus list. One card per
+    /// thread, its turns oldest first like a discussion.
     pub fn elaborations(&mut self, ui: &mut Ui, right: bool) {
         let state = self.state;
         self.nav.marked.retain(|id| state.can_trash(id));
@@ -92,76 +93,72 @@ impl Board<'_> {
             ui.weak("No elaborations requested.");
             return;
         }
-        let title = |id: &str| {
-            state
-                .decision(id)
-                .map(|d| d.title.as_str())
-                .or_else(|| state.todo(id).map(|t| t.title.as_str()))
-                .unwrap_or("")
-        };
-        self.nav.mark_groups.push(state.elabs.iter().rev().map(|r| r.rid.clone()).collect());
-        for r in state.elabs.iter().rev() {
-            let focus = Focus::Elab(r.rid.clone());
+        let threads = state.threads();
+        self.nav.mark_groups.push(threads.iter().map(|t| t[0].rid.clone()).collect());
+        for thread in threads {
+            let root = thread[0];
+            let newest = thread[thread.len() - 1];
+            let focus = Focus::Elab(root.rid.clone());
             if right {
                 self.nav.right.push(focus.clone());
             } else {
                 self.nav.left.push(focus.clone());
             }
-            let open = self.nav.elab_is_open(state, &r.rid);
+            let open = self.nav.elab_is_open(state, &root.rid);
+            let waiting = thread.iter().any(|r| r.answer.is_none());
             self.card(ui, &focus, |b, ui| {
                 ui.horizontal(|ui| {
-                    b.mark_checkbox(ui, &r.rid);
-                    ui.label(RichText::new(&r.rid).monospace().weak());
-                    ui.label(RichText::new(format!("on {}", r.target)).monospace().weak());
+                    b.mark_checkbox(ui, &root.rid);
+                    ui.label(RichText::new(&root.rid).monospace().weak());
+                    ui.label(RichText::new(format!("on {}", root.target)).monospace().weak());
+                    if thread.len() > 1 {
+                        ui.label(RichText::new(format!("{} turns", thread.len())).small().weak());
+                    }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui.small_button("Zoom").on_hover_text("Open large (K · double-click)").clicked() {
-                            b.nav.open_zoom(&r.rid);
+                            b.nav.open_zoom(&root.rid);
                         }
-                        match &r.answer {
-                            Some(_) => {
-                                let (label, hint) = if open { ("less", "Collapse (o)") } else { ("more", "Expand (o)") };
-                                if ui.small_button(label).on_hover_text(hint).clicked() {
-                                    b.nav.elab_open.insert(r.rid.clone(), !open);
-                                }
-                            }
-                            None => {
-                                ui.weak("waiting");
-                                ui.spinner();
-                            }
+                        let (label, hint) = if open { ("less", "Collapse (o)") } else { ("more", "Expand (o)") };
+                        if ui.small_button(label).on_hover_text(hint).clicked() {
+                            b.nav.elab_open.insert(root.rid.clone(), !open);
                         }
-                        ui.add(Label::new(RichText::new(title(&r.target)).weak()).truncate());
+                        if waiting {
+                            ui.weak("waiting");
+                            ui.spinner();
+                        }
+                        ui.add(Label::new(RichText::new(item_title(state, &root.target)).weak()).truncate());
                     });
                 });
-                let quote = RichText::new(format!("“{}”", r.selection)).italics();
-                if open {
-                    ui.add(Label::new(quote).wrap());
-                    if let Some(n) = &r.note {
-                        ui.add(Label::new(RichText::new(n).small()).wrap());
-                    }
-                } else {
-                    ui.add(Label::new(quote).truncate());
-                }
-                let Some(a) = &r.answer else { return };
                 if !open {
-                    // Clicking the preview expands it.
-                    let preview = ui.add(Label::new(preview_job(ui, a)).sense(Sense::click()));
-                    if preview.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                        b.nav.elab_open.insert(r.rid.clone(), true);
+                    ui.add(Label::new(RichText::new(format!("“{}”", root.selection)).italics()).truncate());
+                    // The newest answer as a preview; clicking it expands the thread.
+                    if let Some(a) = thread.iter().rev().find_map(|r| r.answer.as_deref()) {
+                        let preview = ui.add(Label::new(preview_job(ui, a)).sense(Sense::click()));
+                        if preview.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            b.nav.elab_open.insert(root.rid.clone(), true);
+                        }
                     }
                     return;
                 }
-                ui.separator();
                 if b.visual_on(&focus) {
+                    ui.separator();
                     b.item_text(ui, &focus);
                 } else {
-                    ui.push_id(&r.rid, |ui| CommonMarkViewer::new().show(ui, b.md, a));
-                }
-                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                    if ui.small_button("Follow up").on_hover_text("e · or v to select").clicked() {
-                        b.nav.focus(focus.clone());
-                        b.nav.open_prompt(r.target.clone(), a.trim().to_owned());
+                    for (i, r) in thread.iter().enumerate() {
+                        if i > 0 {
+                            ui.separator();
+                        }
+                        turn(ui, b.md, state, r);
                     }
-                });
+                }
+                if newest.answer.is_some() {
+                    ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                        if ui.small_button("Follow up").on_hover_text("e · or v to select").clicked() {
+                            b.nav.focus(focus.clone());
+                            b.nav.follow_up(state, &focus);
+                        }
+                    });
+                }
             });
         }
     }
@@ -384,8 +381,8 @@ impl Board<'_> {
     }
 
     fn elaborate(&mut self, focus: &Focus, selection: Option<String>) {
-        if let Some(target) = nav::elab_target(self.state, focus) {
-            let selection = selection.unwrap_or_else(|| nav::item_text(self.state, focus));
+        let selection = selection.unwrap_or_else(|| nav::item_text(self.state, focus));
+        if let Some(target) = nav::elab_target(self.state, focus, &selection) {
             self.nav.focus(focus.clone());
             self.nav.open_prompt(target, selection.trim().to_owned());
         }
@@ -466,9 +463,10 @@ impl Board<'_> {
 
 /// "3" or "3 · 1 waiting".
 pub fn elab_count(state: &State) -> String {
+    let threads = state.threads().len();
     match state.elabs.iter().filter(|r| r.answer.is_none()).count() {
-        0 => state.elabs.len().to_string(),
-        n => format!("{} · {n} waiting", state.elabs.len()),
+        0 => threads.to_string(),
+        n => format!("{threads} · {n} waiting"),
     }
 }
 
@@ -581,4 +579,44 @@ fn preview_job(ui: &Ui, markdown: &str) -> LayoutJob {
     job.wrap.max_rows = 2;
     job.wrap.overflow_character = Some('…');
     job
+}
+
+pub fn item_title<'s>(state: &'s State, id: &str) -> &'s str {
+    state
+        .decision(id)
+        .map(|d| d.title.as_str())
+        .or_else(|| state.todo(id).map(|t| t.title.as_str()))
+        .unwrap_or("")
+}
+
+/// One turn of a thread: what the operator asked about, their note, and the
+/// agent's answer. A follow-up on a whole answer doesn't repeat it.
+pub fn turn(ui: &mut Ui, md: &mut CommonMarkCache, state: &State, r: &Elab) {
+    let parent_answer = r.parent.as_deref().and_then(|p| state.elab(p)).and_then(|p| p.answer.as_deref());
+    let whole = parent_answer.is_some_and(|a| a.trim() == r.selection.trim());
+    ui.horizontal_wrapped(|ui| {
+        if r.parent.is_some() {
+            ui.label(RichText::new(&r.rid).monospace().weak());
+        }
+        if whole {
+            ui.label(RichText::new("follow-up on the answer above").italics().weak());
+        } else {
+            ui.add(Label::new(RichText::new(format!("“{}”", r.selection)).italics()).wrap());
+        }
+    });
+    if let Some(n) = &r.note {
+        ui.add(Label::new(RichText::new(n).strong()).wrap());
+    }
+    match &r.answer {
+        Some(a) => {
+            ui.add_space(2.0);
+            ui.push_id(&r.rid, |ui| CommonMarkViewer::new().show(ui, md, a));
+        }
+        None => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.weak("waiting for the agent's answer");
+            });
+        }
+    }
 }

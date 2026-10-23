@@ -60,6 +60,9 @@ pub enum Kind {
         selection: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
+        /// The elaboration this one follows up on; they form a thread.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
     },
     #[serde(rename = "elab.add")]
     ElabAdd { rid: String, text_md: String },

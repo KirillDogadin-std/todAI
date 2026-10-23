@@ -53,6 +53,9 @@ Updates mean:
 - `tN ... marked NOT done again`: it is not complete after all.
 - `rN: operator asks to elaborate on ...`: they did not understand part of an
   item. Answer it (below), then continue.
+- `rN: operator follows up in thread rM ...`: a reply to your earlier answer.
+  The operator reads the thread as one conversation, so build on what you
+  already said instead of repeating it (`todai show BOARD` prints the thread).
 
 ## Elaborate
 

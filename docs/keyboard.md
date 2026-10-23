@@ -27,10 +27,10 @@ The status bar shows the current state: `NORMAL`, `INSERT`, `VISUAL`,
 | `space` | mark / unmark a finished item or an elaboration (multi-select) |
 | `d` | remove the marked items, or the one under the cursor, from the board (asks first); removing an unanswered elaboration cancels it |
 | `Esc` | clear the selection |
-| `o` · `za` | on an elaboration: expand / collapse it (`zo` / `zc` too) |
+| `o` · `za` | on an elaboration thread: expand / collapse it (`zo` / `zc` too) |
 | `zR` · `zM` | expand / collapse all elaborations, or only the selected ones |
-| `K` | zoom: open an elaboration in the overlay (on an item: its newest elaboration) |
-| `e` | elaborate on the whole item |
+| `K` | zoom: open an elaboration thread in the overlay (on an item: its most recently active thread) |
+| `e` | elaborate on the whole item; on a thread, follow up on its newest answer |
 | `v` · `V` | select text in the item (visual mode) / select all of it |
 | `za` · `space` | toggle the section (`zo` open, `zc` close) |
 | `gt` · `gT` | next / previous tab |
@@ -62,8 +62,8 @@ mouse mode.
 | `j` `k` · `Down` `Up` | scroll |
 | `Ctrl+d` · `Ctrl+u` · `PageDown` · `PageUp` | scroll a page |
 | `gg` · `G` · `Home` · `End` | top / bottom |
-| `n` · `p` | next / previous elaboration |
-| `e` | follow up on this answer |
+| `n` · `p` | next / previous thread |
+| `e` | follow up on the thread's newest answer |
 | `Esc` · `q` | close (clicking outside closes too) |
 
 ## Typing
@@ -94,7 +94,9 @@ Answer fields, todo notes and the elaboration message:
 - **Elaborate on part of an item:** drag-select text in its title or context,
   then press `Enter`, right-click → *Elaborate on selection*, or click
   **Elaborate**. With no selection, those act on the whole item.
-- **Follow up** on an answered elaboration asks about the answer.
+- **Follow up** on an answered elaboration asks about the answer, in the same
+  thread. Selecting text in a thread (`v`) and pressing `Enter` follows up on
+  the turn that holds it. Each thread is one card, oldest turn first.
 - Section headers toggle on click.
 - **Select** finished items or elaborations with their checkboxes (or
   **Select all** in Done). Shift-click a checkbox to select everything

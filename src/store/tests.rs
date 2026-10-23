@@ -83,6 +83,7 @@ fn elaboration_roundtrip() {
             target: "d1".into(),
             selection: "X".into(),
             note: Some("what is X".into()),
+            parent: None,
         })
     })
     .unwrap();
@@ -133,7 +134,7 @@ fn trash_removes_finished_items_and_keeps_ids_unique() {
     add_decision(&log, "b?");
     let op = |k: Kind| log.append(Actor::Operator, |_| Ok(k));
     op(Kind::DecisionResolve { id: "d1".into(), text: "x".into() }).unwrap();
-    op(Kind::ElabRequest { rid: "r1".into(), target: "d1".into(), selection: "a".into(), note: None }).unwrap();
+    op(Kind::ElabRequest { rid: "r1".into(), target: "d1".into(), selection: "a".into(), note: None, parent: None }).unwrap();
 
     assert!(op(Kind::Trash { ids: vec!["d2".into()] }).is_err(), "pending items can't be trashed");
     assert!(op(Kind::Trash { ids: vec![] }).is_err());
@@ -146,7 +147,7 @@ fn trash_removes_finished_items_and_keeps_ids_unique() {
     log.append(Actor::Agent, |_| Ok(Kind::ElabAdd { rid: "r1".into(), text_md: "late".into() })).unwrap();
     assert!(op(Kind::DecisionReopen { id: "d1".into() }).is_err());
     // Elaborations can be trashed on their own, answered or not.
-    op(Kind::ElabRequest { rid: "r2".into(), target: "d2".into(), selection: "b".into(), note: None }).unwrap();
+    op(Kind::ElabRequest { rid: "r2".into(), target: "d2".into(), selection: "b".into(), note: None, parent: None }).unwrap();
     op(Kind::Trash { ids: vec!["r2".into()] }).unwrap();
     let (_, s2) = log.load_state().unwrap();
     assert!(s2.elab("r2").is_none() && s2.decision("d2").is_some());
@@ -163,4 +164,46 @@ fn todo_json_distinguishes_done_without_note() {
     assert_eq!(v(&log)["done"], false);
     log.append(Actor::Operator, |_| Ok(Kind::TodoDone { id: "t1".into(), note: None })).unwrap();
     assert_eq!((v(&log)["done"].clone(), v(&log)["note"].clone()), (serde_json::json!(true), serde_json::Value::Null));
+}
+
+#[test]
+fn follow_ups_form_threads() {
+    let (_d, log) = tmp_log();
+    add_decision(&log, "a?");
+    add_decision(&log, "b?");
+    let op = |k: Kind| log.append(Actor::Operator, |_| Ok(k));
+    let agent = |rid: &str| log.append(Actor::Agent, |_| Ok(Kind::ElabAdd { rid: rid.into(), text_md: "ok".into() }));
+    let ask = |rid: &str, target: &str, parent: Option<&str>| Kind::ElabRequest {
+        rid: rid.into(),
+        target: target.into(),
+        selection: "s".into(),
+        note: None,
+        parent: parent.map(Into::into),
+    };
+    op(ask("r1", "d1", None)).unwrap();
+    agent("r1").unwrap();
+    op(ask("r2", "d1", None)).unwrap();
+    op(ask("r3", "d1", Some("r1"))).unwrap();
+    assert!(op(ask("r9", "d1", Some("r8"))).is_err(), "unknown parent");
+    assert!(op(ask("r9", "d2", Some("r1"))).is_err(), "parent about another item");
+    agent("r3").unwrap();
+    op(ask("r4", "d1", Some("r3"))).unwrap();
+
+    let (_, s) = log.load_state().unwrap();
+    assert_eq!(s.thread_root("r4"), "r1");
+    let threads: Vec<Vec<&str>> = s.threads().iter().map(|t| t.iter().map(|r| r.rid.as_str()).collect()).collect();
+    assert_eq!(threads, [vec!["r1", "r3", "r4"], vec!["r2"]], "oldest first inside, newest activity first outside");
+
+    // Trashing any turn takes the whole thread.
+    op(Kind::Trash { ids: vec!["r3".into()] }).unwrap();
+    let (_, s) = log.load_state().unwrap();
+    assert!(s.elab("r1").is_none() && s.elab("r4").is_none() && s.elab("r2").is_some());
+    agent("r4").unwrap(); // late answer to a trashed follow-up is ignored
+}
+
+#[test]
+fn requests_without_parent_still_parse() {
+    let line = r#"{"seq":1,"ts":0,"by":"operator","type":"elab.request","rid":"r1","target":"d1","selection":"x"}"#;
+    let e: Event = serde_json::from_str(line).unwrap();
+    assert!(matches!(e.kind, Kind::ElabRequest { parent: None, .. }));
 }

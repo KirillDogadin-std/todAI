@@ -368,7 +368,7 @@ fn harness_with_elabs() -> Harness {
     let mut h = Harness::new();
     let op = |k: Kind| h.log.append(Actor::Operator, |_| Ok(k)).unwrap();
     let agent = |k: Kind| h.log.append(Actor::Agent, |_| Ok(k)).unwrap();
-    let ask = |rid: &str, target: &str| Kind::ElabRequest { rid: rid.into(), target: target.into(), selection: "x".into(), note: None };
+    let ask = |rid: &str, target: &str| Kind::ElabRequest { rid: rid.into(), target: target.into(), selection: "x".into(), note: None, parent: None };
     op(ask("r1", "d1"));
     agent(Kind::ElabAdd { rid: "r1".into(), text_md: "**old** answer".into() });
     op(Kind::DecisionResolve { id: "d1".into(), text: "egui".into() });
@@ -500,7 +500,7 @@ fn zoom_closes_when_its_elaboration_is_trashed() {
 fn zoom_panel_size_does_not_depend_on_content() {
     let mut h = harness_with_elabs(); // r1 "**old** answer", r2 "newer": both short
     let long = (0..200).map(|i| format!("line {i}\n\n")).collect::<String>();
-    h.log.append(Actor::Operator, |_| Ok(Kind::ElabRequest { rid: "r4".into(), target: "d2".into(), selection: "y".into(), note: None })).unwrap();
+    h.log.append(Actor::Operator, |_| Ok(Kind::ElabRequest { rid: "r4".into(), target: "d2".into(), selection: "y".into(), note: None, parent: None })).unwrap();
     h.log.append(Actor::Agent, |_| Ok(Kind::ElabAdd { rid: "r4".into(), text_md: long })).unwrap();
     h.tab.reload_if_dirty_now();
     let size = |h: &mut Harness, rid: &str| {
@@ -539,4 +539,34 @@ fn default_fonts_have_glyphs_we_use() {
     let used: String = src.chars().filter(|c| !c.is_ascii() && *c != '💀').collect();
     let missing: String = used.chars().filter(|c| !ctx.fonts_mut(|f| f.has_glyph(&font, *c))).collect();
     assert!(missing.is_empty(), "default fonts lack: {missing}");
+}
+
+#[test]
+fn follow_up_joins_the_thread_and_renders_as_one_card() {
+    let mut h = harness_with_elabs();
+    h.move_to(Focus::Elab("r2".into()));
+    h.type_keys("e");
+    let p = h.tab.nav.prompt.as_ref().expect("prompt open");
+    assert_eq!((p.parent.as_deref(), p.selection.as_str()), (Some("r2"), "newer"));
+    h.text("go on");
+    h.key(Key::Enter, Modifiers::NONE);
+    let s = h.state();
+    let r4 = s.elab("r4").expect("follow-up sent");
+    assert_eq!((r4.target.as_str(), r4.parent.as_deref()), ("d2", Some("r2")));
+
+    h.log.append(Actor::Agent, |_| Ok(Kind::ElabAdd { rid: "r4".into(), text_md: "zebra stripes".into() })).unwrap();
+    h.tab.reload_if_dirty_now();
+    h.frame(vec![]);
+    h.frame(vec![]);
+    let elab_cards: Vec<_> = h.tab.nav.right.iter().chain(&h.tab.nav.left).filter(|f| matches!(f, Focus::Elab(_))).cloned().collect();
+    assert!(elab_cards.contains(&Focus::Elab("r2".into())) && !elab_cards.contains(&Focus::Elab("r4".into())));
+    assert_eq!(elab_cards.len(), 3, "r1, r2 (with r4), r3");
+
+    // Selecting a word in a later turn replies to that turn.
+    h.move_to(Focus::Elab("r2".into()));
+    h.type_keys("v");
+    h.type_keys("w"); // "newer" -> "zebra"
+    h.key(Key::Enter, Modifiers::NONE);
+    let p = h.tab.nav.prompt.as_ref().expect("prompt open");
+    assert_eq!((p.parent.as_deref(), p.selection.as_str()), (Some("r4"), "zebra"));
 }

@@ -30,7 +30,7 @@ events in order. Always write through `todai`; it validates every event.
 | `todo.add` | agent | `id` (`tN`), `title`, `context`? | a manual step for the operator |
 | `todo.done` | operator | `id`, `note`? | the step is done |
 | `todo.undone` | operator | `id` | it isn't after all |
-| `elab.request` | operator | `rid` (`rN`), `target` (item id), `selection`, `note`? | "explain this part" |
+| `elab.request` | operator | `rid` (`rN`), `target` (item id), `selection`, `note`?, `parent`? (`rN` it follows up on, same target) | "explain this part" |
 | `elab.add` | agent | `rid`, `text_md` | the explanation, as markdown |
 | `item.trash` | operator | `ids` | remove finished items (resolved or withdrawn decisions, done todos) with their elaborations, and/or elaborations (`rN`) on their own |
 | `ack` | agent | `upto_seq` | the agent has seen operator events up to this seq |
@@ -48,8 +48,11 @@ Trashed ids are never reused.
   it, validates, assigns `seq` and ids, and appends one line. The agent's CLI
   calls, hooks and the window can write at the same time safely.
 - **Crashes.** A torn last line (no trailing newline) is ignored on read.
+- **Threads.** Requests linked by `parent` form a thread, rooted at the one
+  without a parent.
 - **Trash.** Only finished items and elaborations can be trashed; trashing an
-  unanswered elaboration cancels it. Operator actions on a
+  unanswered elaboration cancels it, and trashing any elaboration in a thread
+  trashes the whole thread. Operator actions on a
   trashed item are rejected; the agent's late `decision.withdraw` or
   `elab.add` for one is accepted and ignored, so agents never fail because
   the operator tidied up.

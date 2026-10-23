@@ -54,6 +54,10 @@ pub struct Elab {
     pub selection: String,
     pub note: Option<String>,
     pub answer: Option<String>,
+    pub parent: Option<String>,
+    /// Seq of the request, or of its answer once there is one.
+    #[serde(skip)]
+    pub activity: u64,
 }
 
 /// Current view of a log, produced by folding its events in order.
@@ -90,6 +94,44 @@ impl State {
 
     pub fn elab(&self, rid: &str) -> Option<&Elab> {
         self.elabs.iter().find(|r| r.rid == rid)
+    }
+
+    /// The first elaboration of `rid`'s thread.
+    pub fn thread_root(&self, rid: &str) -> String {
+        match self.elab(rid) {
+            Some(r) => self.root_of(r),
+            None => rid.to_owned(),
+        }
+    }
+
+    fn root_of(&self, r: &Elab) -> String {
+        let mut cur = r;
+        // Parents always precede their follow-ups, so this terminates.
+        while let Some(p) = cur.parent.as_deref().and_then(|p| self.elab(p)) {
+            cur = p;
+        }
+        cur.rid.clone()
+    }
+
+    /// Elaboration threads, each oldest first; the thread with the newest
+    /// request or answer comes first.
+    pub fn threads(&self) -> Vec<Vec<&Elab>> {
+        let mut threads: Vec<(String, Vec<&Elab>)> = Vec::new();
+        for r in &self.elabs {
+            let root = self.root_of(r);
+            match threads.iter_mut().find(|(id, _)| *id == root) {
+                Some((_, t)) => t.push(r),
+                None => threads.push((root, vec![r])),
+            }
+        }
+        let mut threads: Vec<Vec<&Elab>> = threads.into_iter().map(|(_, t)| t).collect();
+        threads.sort_by_key(|t| std::cmp::Reverse(t.iter().map(|r| r.activity).max()));
+        threads
+    }
+
+    /// The thread whose first elaboration is `root`, oldest first.
+    pub fn thread(&self, root: &str) -> Vec<&Elab> {
+        self.elabs.iter().filter(|r| self.root_of(r) == root).collect()
     }
 
     pub fn next_decision_id(&self) -> String {
@@ -159,12 +201,19 @@ impl State {
             Kind::TodoDone { id, .. } | Kind::TodoUndone { id } if self.todo(id).is_none() => {
                 bail!("no todo {id}")
             }
-            Kind::ElabRequest { rid, target, .. } => {
+            Kind::ElabRequest { rid, target, parent, .. } => {
                 if self.elab(rid).is_some() {
                     bail!("elaboration {rid} already exists");
                 }
                 if self.decision(target).is_none() && self.todo(target).is_none() {
                     bail!("no item {target}");
+                }
+                if let Some(p) = parent {
+                    match self.elab(p) {
+                        None => bail!("no elaboration {p}"),
+                        Some(r) if &r.target != target => bail!("{p} is about {}, not {target}", r.target),
+                        Some(_) => {}
+                    }
                 }
             }
             Kind::ElabAdd { rid, .. } if self.elab(rid).is_none() => {
@@ -220,7 +269,7 @@ impl State {
             }
             Kind::TodoDone { id, note } => self.todo_mut(id).done = Some(note.clone()),
             Kind::TodoUndone { id } => self.todo_mut(id).done = None,
-            Kind::ElabRequest { rid, target, selection, note } => {
+            Kind::ElabRequest { rid, target, selection, note, parent } => {
                 self.counts[2] += 1;
                 self.elabs.push(Elab {
                     rid: rid.clone(),
@@ -228,19 +277,27 @@ impl State {
                     selection: selection.clone(),
                     note: note.clone(),
                     answer: None,
+                    parent: parent.clone(),
+                    activity: e.seq,
                 })
             }
             Kind::ElabAdd { rid, text_md } => {
                 let r = self.elabs.iter_mut().find(|r| &r.rid == rid).unwrap();
                 r.answer = Some(text_md.clone());
+                r.activity = e.seq;
             }
             Kind::Ack { upto_seq } => self.acked_seq = self.acked_seq.max(*upto_seq),
             Kind::Trash { ids } => {
                 self.decisions.retain(|d| !ids.contains(&d.id));
                 self.todos.retain(|t| !ids.contains(&t.id));
-                let (gone, kept) = std::mem::take(&mut self.elabs)
-                    .into_iter()
-                    .partition(|r| ids.contains(&r.target) || ids.contains(&r.rid));
+                // A thread goes as a whole: trashing any of its elaborations
+                // takes the rest with it.
+                let roots: Vec<String> = ids.iter().filter(|id| self.elab(id).is_some()).map(|id| self.thread_root(id)).collect();
+                let in_trashed_thread: BTreeSet<String> =
+                    self.elabs.iter().filter(|r| roots.contains(&self.root_of(r))).map(|r| r.rid.clone()).collect();
+                let (gone, kept) = std::mem::take(&mut self.elabs).into_iter().partition(|r| {
+                    ids.contains(&r.target) || ids.contains(&r.rid) || in_trashed_thread.contains(&r.rid)
+                });
                 self.elabs = kept;
                 let gone: Vec<Elab> = gone;
                 self.trashed.extend(ids.iter().cloned());

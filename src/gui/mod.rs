@@ -9,7 +9,7 @@ use std::sync::mpsc;
 
 use anyhow::{Result, anyhow};
 use egui::{Align, Key, KeyboardShortcut, Layout, Modifiers, Panel, RichText, TextEdit, TextStyle};
-use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
+use egui_commonmark::CommonMarkCache;
 
 use crate::config::{Config, InputMode, Theme};
 use crate::ipc::{self, Incoming, Reply, Request};
@@ -43,11 +43,11 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("x", "todo done / undone; reopen decision"),
             ("space", "mark / unmark a finished item or elaboration (multi-select)"),
             ("d", "remove marked items, or this one, from the board"),
-            ("o  za", "on an elaboration: expand / collapse it"),
+            ("o  za", "on an elaboration thread: expand / collapse it"),
             ("zR  zM", "expand / collapse all elaborations (or the selected ones)"),
-            ("K", "zoom: open an elaboration large (on an item: its newest)"),
+            ("K", "zoom: open a thread large (on an item: its newest)"),
             ("Esc", "clear the selection"),
-            ("e", "elaborate on the whole item"),
+            ("e", "elaborate on the whole item; on a thread, follow up"),
             ("v  V", "select text / select all (visual)"),
             ("za  space", "toggle section (zo / zc open / close)"),
             ("gt  gT", "next / previous tab"),
@@ -72,7 +72,7 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("j k  Down Up", "scroll"),
             ("Ctrl+d  Ctrl+u", "scroll a page (also PageDown / PageUp)"),
             ("gg  G", "top / bottom"),
-            ("n  p", "next / previous elaboration"),
+            ("n  p", "next / previous thread"),
             ("e", "follow up on this answer"),
             ("Esc  q", "close (or click outside)"),
         ],
@@ -609,17 +609,14 @@ fn zoom_overlay(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache) {
     let t = ctx.animate_bool_with_time(egui::Id::new("zoom-fade"), tab.nav.zoom.is_some(), 0.15);
     let Some(rid) = tab.nav.zoom.clone() else { return };
     let (state, nav) = (&tab.state, &mut tab.nav);
-    let Some(r) = state.elab(&rid) else {
+    let thread = state.thread(&rid);
+    let (Some(&r), Some(&newest)) = (thread.first(), thread.last()) else {
         nav.zoom = None; // trashed while open
         return;
     };
-    let order: Vec<&str> = state.elabs.iter().rev().map(|e| e.rid.as_str()).collect();
+    let order: Vec<String> = state.threads().into_iter().map(|t| t[0].rid.clone()).collect();
     let index = order.iter().position(|x| *x == rid).unwrap_or(0);
-    let title = state
-        .decision(&r.target)
-        .map(|d| d.title.as_str())
-        .or_else(|| state.todo(&r.target).map(|t| t.title.as_str()))
-        .unwrap_or("");
+    let title = board::item_title(state, &r.target);
     let screen = ctx.content_rect();
     let width = (screen.width() * 0.8).clamp(280.0, 1100.0);
     let body_height = (screen.height() * 0.85 - 150.0).max(80.0);
@@ -641,10 +638,6 @@ fn zoom_overlay(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache) {
                     ui.add(egui::Label::new(RichText::new(title).strong()).truncate());
                 });
             });
-            ui.add(egui::Label::new(RichText::new(format!("“{}”", r.selection)).italics()).wrap());
-            if let Some(n) = &r.note {
-                ui.add(egui::Label::new(RichText::new(n).small()).wrap());
-            }
             ui.separator();
             // Fixed height: short answers leave empty space instead of the
             // panel shrinking and jumping around as you step through them.
@@ -656,21 +649,20 @@ fn zoom_overlay(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache) {
             if let Some(to) = nav.zoom_scroll_to.take() {
                 scroll = scroll.vertical_scroll_offset(to);
             }
-            let out = scroll.show(ui, |ui| match &r.answer {
-                Some(a) => {
-                    ui.push_id(("zoom-md", &rid), |ui| CommonMarkViewer::new().show(ui, md, a));
-                }
-                None => {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.weak("waiting for the agent's answer");
-                    });
-                }
+            let out = scroll.show(ui, |ui| {
+                ui.push_id("zoom-md", |ui| {
+                    for (i, t) in thread.iter().enumerate() {
+                        if i > 0 {
+                            ui.separator();
+                        }
+                        board::turn(ui, md, state, t);
+                    }
+                });
             });
             nav.zoom_offset = out.state.offset.y;
             ui.separator();
             ui.horizontal(|ui| {
-                if r.answer.is_some() {
+                if newest.answer.is_some() {
                     follow_up = ui.button("Follow up").on_hover_text("e").clicked();
                 }
                 ui.weak("j k scroll · n p next / previous · e follow up · Esc close");
@@ -680,9 +672,9 @@ fn zoom_overlay(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache) {
         nav.zoom = None;
     } else if step != 0 {
         nav.zoom_step(state, step as isize);
-    } else if follow_up && let Some(a) = &r.answer {
+    } else if follow_up {
         nav.zoom = None;
-        nav.open_prompt(r.target.clone(), a.trim().to_owned());
+        nav.follow_up(state, &nav::Focus::Elab(rid));
     }
 }
 
@@ -731,8 +723,17 @@ fn prompt_panel(ui: &mut egui::Ui, tab: &mut Tab, actions: &mut Vec<Kind>) {
             .or_else(|| state.todo(&p.target).map(|t| t.title.as_str()))
             .unwrap_or("");
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Elaborate on").strong());
-            ui.label(RichText::new(&p.target).monospace().weak());
+            match &p.parent {
+                Some(rid) => {
+                    ui.label(RichText::new("Follow up on").strong());
+                    ui.label(RichText::new(rid).monospace().weak());
+                    ui.label(RichText::new(format!("in thread {} on {}", state.thread_root(rid), p.target)).monospace().weak());
+                }
+                None => {
+                    ui.label(RichText::new("Elaborate on").strong());
+                    ui.label(RichText::new(&p.target).monospace().weak());
+                }
+            }
             ui.weak(title);
         });
         let quote: String = p.selection.chars().take(300).collect();
@@ -756,7 +757,7 @@ fn prompt_panel(ui: &mut egui::Ui, tab: &mut Tab, actions: &mut Vec<Kind>) {
     });
     if send && let Some(p) = nav.prompt.take() {
         let note = Some(p.note.trim().to_owned()).filter(|n| !n.is_empty());
-        actions.push(Kind::ElabRequest { rid: String::new(), target: p.target, selection: p.selection, note });
+        actions.push(Kind::ElabRequest { rid: String::new(), target: p.target, selection: p.selection, note, parent: p.parent });
     }
     if cancel {
         nav.prompt = None;
