@@ -27,7 +27,7 @@ install -m755 todai-*/todai ~/.local/bin/
 **From source** (stable Rust; the repo pins `stable`):
 
 ```sh
-git clone <this repo> && cd todai
+git clone https://github.com/KirillDogadin-std/todai && cd todai
 cargo install --path .
 ```
 
