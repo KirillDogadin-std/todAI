@@ -8,7 +8,7 @@ chat whenever you need a decision or a hands-on action from them.
 
     todai attach [NAME]
 
-Creates (or reuses) `.todai/NAME.jsonl` at the repo root (NAME defaults to
+Creates (or reuses) `.agents/todai/NAME.jsonl` at the repo root (NAME defaults to
 `board`), opens it in the operator's window, and prints its path. Use a
 distinct NAME per independent workflow. Pass the printed path as BOARD below.
 

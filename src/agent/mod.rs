@@ -27,14 +27,14 @@ pub const PI_EXTENSION: &str = include_str!("pi-extension.ts");
 /// output to learn which board a session uses.
 pub const ATTACHED_MARKER: &str = "todai: attached ";
 
-/// `<repo root or cwd>/.todai/<name>.jsonl`, or `name` itself if it is a path.
+/// `<repo root or cwd>/.agents/todai/<name>.jsonl`, or `name` itself if it is a path.
 pub fn board_path(name: &str) -> Result<PathBuf> {
     if name.contains('/') || name.ends_with(".jsonl") {
         return Ok(std::path::absolute(name)?);
     }
     let cwd = std::env::current_dir()?;
     let root = repo_root(&cwd).unwrap_or(cwd);
-    Ok(root.join(".todai").join(format!("{name}.jsonl")))
+    Ok(root.join(".agents/todai").join(format!("{name}.jsonl")))
 }
 
 pub fn repo_root(from: &Path) -> Option<PathBuf> {
@@ -55,8 +55,8 @@ mod tests {
 
     #[test]
     fn finds_attached_marker_in_noisy_output() {
-        let out = "building...\ntodai: attached /r/.todai/board.jsonl\nPost decisions ...\n";
-        assert_eq!(attached_board(out), Some(PathBuf::from("/r/.todai/board.jsonl")));
+        let out = "building...\ntodai: attached /r/.agents/todai/board.jsonl\nPost decisions ...\n";
+        assert_eq!(attached_board(out), Some(PathBuf::from("/r/.agents/todai/board.jsonl")));
         assert_eq!(attached_board("nothing here"), None);
     }
 

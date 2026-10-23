@@ -10,6 +10,8 @@ behaves unless the user asked for it. That gives three layers, each optional:
    Codex, pi, OpenCode and others. It only says "run `todai guide`"; the real
    instructions ship inside the binary, so they always match the installed
    version.
+   There is one copy, in the agent-agnostic `.agents/skills/todai/`; agents
+   that look elsewhere get a symlink to it.
 3. **An awareness adapter** pushes the operator's answers into the agent
    while it works. There is no cross-agent standard for this, so each agent
    gets its own thin adapter. All of them call back into `todai`.
@@ -20,6 +22,9 @@ behaves unless the user asked for it. That gives three layers, each optional:
   confirms, and only at the scope they pick: the current project, or their
   user. Every write is recorded in `~/.local/state/todai/installs.json` and
   `todai setup --remove` reverts it (files edited since install are kept).
+  `--remove --agent X` removes only what X alone needed; the shared skill
+  stays while another agent still uses it. Setup refuses to replace anything
+  it didn't create.
 - **Active only when attached.** Installed adapters do nothing in a session
   until it runs `todai attach`. Agents load the skill only when the user asks
   to use todai.
@@ -32,7 +37,7 @@ behaves unless the user asked for it. That gives three layers, each optional:
 `todai guide` prints it; source: [`src/agent/guide.md`](../src/agent/guide.md).
 In short:
 
-1. `todai attach [NAME]` creates `.todai/NAME.jsonl` at the repo root, opens
+1. `todai attach [NAME]` creates `.agents/todai/NAME.jsonl` at the repo root, opens
    it, and prints `todai: attached <path>`.
 2. `todai add-decision` / `todai add-todo` post items and print their ids.
 3. Operator updates arrive as a block starting `todai: operator updates`,
@@ -55,8 +60,12 @@ Installed by `todai setup --agent claude`:
 
 | Scope | Skill | Hooks |
 |---|---|---|
-| project | `.claude/skills/todai/SKILL.md` | `.claude/settings.local.json` |
-| user | `~/.claude/skills/todai/SKILL.md` | `~/.claude/settings.json` |
+| project | `.agents/skills/todai/`, linked from `.claude/skills/todai` | `.claude/settings.local.json` |
+| user | `~/.agents/skills/todai/`, linked from `~/.claude/skills/todai` | `~/.claude/settings.json` |
+
+Claude Code only reads skills from `.claude/skills`, so setup links that to
+the shared copy in `.agents/skills` (a relative symlink) instead of
+duplicating it.
 
 Hooks (`todai hook claude <event>`, implemented in
 [`src/agent/claude.rs`](../src/agent/claude.rs)):

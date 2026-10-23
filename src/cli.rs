@@ -32,7 +32,7 @@ enum Cmd {
     /// List the tabs open in the running window.
     Tabs,
 
-    /// [agent] Start using a board: creates `.todai/NAME.jsonl` at the repo
+    /// [agent] Start using a board: creates `.agents/todai/NAME.jsonl` at the repo
     /// root (NAME defaults to `board`), opens it, and prints its path.
     Attach {
         name: Option<String>,

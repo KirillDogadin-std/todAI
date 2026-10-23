@@ -10,7 +10,7 @@ rm -f "$F"
 
 $T add-decision $F "Default location for board files?" \
   -c "Repo-local keeps boards next to the code and lets git track them; a global dir keeps repos clean but boards get lost when you move a project." \
-  -o ".todai/ in repo" -o "~/.local/share/todai" -o "both, repo wins" >/dev/null
+  -o ".agents/todai/ in repo" -o "~/.local/share/todai" -o "both, repo wins" >/dev/null
 $T add-decision $F "Should the operator be able to add their own todos?" >/dev/null
 $T add-decision $F "Withdrawn decisions: hide or strike through?" -o hide -o strike >/dev/null
 $T add-decision $F "Notify on new decisions?" \
@@ -31,7 +31,7 @@ $T ask $F d1 "lets git track them" -n "would that clutter git diffs?" >/dev/null
 $T elaborate $F r1 - <<'MD' >/dev/null
 Only if you commit them. Two options:
 
-- add `.todai/` to `.gitignore` and keep boards local
+- add `.agents/todai/` to `.gitignore` and keep boards local
 - **commit them** as a lightweight decision record, reviewed with the code
 
 The log is append-only, so diffs are just new lines at the end.

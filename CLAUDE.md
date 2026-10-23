@@ -21,6 +21,10 @@ Keep `cargo build` warning-free and `cargo test` green before committing.
   anything globally by default. New agent support goes through
   `src/agent/setup.rs` (recorded, reversible, scoped) and must stay inert until
   a session runs `todai attach`. See `docs/agents.md`.
+- **Use the agent-agnostic `.agents/` directory** for anything todai puts in
+  a project or home dir (boards in `.agents/todai/`, the skill in
+  `.agents/skills/todai/`). Agents that only read their own directory get a
+  symlink (Claude Code: `.claude/skills/todai`), never a second copy.
 - **The protocol text lives in `src/agent/guide.md`** and ships in the binary.
   The installed skill (`SKILL` in `src/agent/mod.rs`) only points at
   `todai guide`; keep it that way so upgrades never need a re-setup.

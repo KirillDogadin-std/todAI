@@ -43,15 +43,25 @@ pub struct Args {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 enum Item {
-    File { agent: Agent, path: PathBuf, content: String },
+    /// `agents` lists every agent relying on the file (the skill is shared).
+    File { agents: Vec<Agent>, path: PathBuf, content: String },
+    /// A relative symlink, e.g. Claude Code's skill dir pointing into `.agents`.
+    Symlink { agent: Agent, path: PathBuf, target: PathBuf },
     ClaudeHooks { path: PathBuf, bin: String },
 }
 
 impl Item {
-    fn agent(&self) -> Agent {
+    fn path(&self) -> &Path {
         match self {
-            Item::File { agent, .. } => *agent,
-            Item::ClaudeHooks { .. } => Agent::Claude,
+            Item::File { path, .. } | Item::Symlink { path, .. } | Item::ClaudeHooks { path, .. } => path,
+        }
+    }
+
+    fn used_by(&self, agent: Agent) -> bool {
+        match self {
+            Item::File { agents, .. } => agents.contains(&agent),
+            Item::Symlink { agent: a, .. } => *a == agent,
+            Item::ClaudeHooks { .. } => agent == Agent::Claude,
         }
     }
 
@@ -59,6 +69,10 @@ impl Item {
         match (self, removing) {
             (Item::File { path, .. }, false) => format!("write   {}", path.display()),
             (Item::File { path, .. }, true) => format!("delete  {}", path.display()),
+            (Item::Symlink { path, target, .. }, false) => {
+                format!("link    {} -> {}", path.display(), target.display())
+            }
+            (Item::Symlink { path, .. }, true) => format!("delete  {} (link)", path.display()),
             (Item::ClaudeHooks { path, .. }, false) => {
                 format!("update  {}  (+ PostToolUse and Stop hooks running `todai hook claude ...`)", path.display())
             }
@@ -104,10 +118,24 @@ pub fn run(args: Args) -> Result<()> {
         println!("Nothing changed.");
         return Ok(());
     }
+    // Fail before writing anything, so setup never leaves a half install.
+    for item in &items {
+        check(item)?;
+    }
     let mut manifest = Manifest::load();
-    for item in items {
+    for mut item in items {
         apply(&item)?;
-        manifest.items.retain(|m| !same_target(m, &item));
+        // Re-installing keeps agents recorded by earlier runs on a shared file.
+        if let Some(Item::File { agents: old, .. }) = manifest.items.iter().find(|m| m.path() == item.path())
+            && let Item::File { agents, .. } = &mut item
+        {
+            for a in old {
+                if !agents.contains(a) {
+                    agents.push(*a);
+                }
+            }
+        }
+        manifest.items.retain(|m| m.path() != item.path());
         manifest.items.push(item);
     }
     manifest.save()?;
@@ -117,16 +145,24 @@ pub fn run(args: Args) -> Result<()> {
 
 fn plan(agents: &[Agent], scope: Scope, base: &Path, bin: &str) -> Vec<Item> {
     let mut items = Vec::new();
-    let add_skill = |items: &mut Vec<Item>, agent, dir: &str| {
-        let path = base.join(dir).join("skills/todai/SKILL.md");
-        if !items.iter().any(|i| matches!(i, Item::File { path: p, .. } if *p == path)) {
-            items.push(Item::File { agent, path, content: SKILL.to_owned() });
+    // One real skill in the agent-agnostic `.agents/skills`, shared by everyone.
+    let skill = base.join(".agents/skills/todai/SKILL.md");
+    let add_skill = |items: &mut Vec<Item>, agent| {
+        match items.iter_mut().find(|i| i.path() == skill) {
+            Some(Item::File { agents, .. }) => agents.push(agent),
+            _ => items.push(Item::File { agents: vec![agent], path: skill.clone(), content: SKILL.to_owned() }),
         }
     };
     for agent in agents {
         match agent {
             Agent::Claude => {
-                add_skill(&mut items, Agent::Claude, ".claude");
+                // Claude Code only reads `.claude/skills`; point it at the shared copy.
+                add_skill(&mut items, Agent::Claude);
+                items.push(Item::Symlink {
+                    agent: Agent::Claude,
+                    path: base.join(".claude/skills/todai"),
+                    target: PathBuf::from("../../.agents/skills/todai"),
+                });
                 // Project scope uses the personal, uncommitted settings file.
                 let settings = match scope {
                     Scope::Project => base.join(".claude/settings.local.json"),
@@ -135,18 +171,29 @@ fn plan(agents: &[Agent], scope: Scope, base: &Path, bin: &str) -> Vec<Item> {
                 items.push(Item::ClaudeHooks { path: settings, bin: bin.to_owned() });
             }
             Agent::Pi => {
-                add_skill(&mut items, Agent::Pi, ".agents");
+                add_skill(&mut items, Agent::Pi);
                 let ext = match scope {
                     Scope::Project => base.join(".pi/extensions/todai.ts"),
                     Scope::User => base.join(".pi/agent/extensions/todai.ts"),
                 };
                 let content = PI_EXTENSION.replace("__TODAI_BIN__", bin);
-                items.push(Item::File { agent: Agent::Pi, path: ext, content });
+                items.push(Item::File { agents: vec![Agent::Pi], path: ext, content });
             }
-            Agent::Generic => add_skill(&mut items, Agent::Generic, ".agents"),
+            Agent::Generic => add_skill(&mut items, Agent::Generic),
         }
     }
     items
+}
+
+/// Refuses to replace anything setup didn't create.
+fn check(item: &Item) -> Result<()> {
+    if let Item::Symlink { path, target, .. } = item
+        && let Ok(m) = std::fs::symlink_metadata(path)
+        && !(m.is_symlink() && std::fs::read_link(path)? == *target)
+    {
+        bail!("{} already exists; move it away and run setup again", path.display());
+    }
+    Ok(())
 }
 
 fn apply(item: &Item) -> Result<()> {
@@ -155,15 +202,39 @@ fn apply(item: &Item) -> Result<()> {
             std::fs::create_dir_all(path.parent().unwrap())?;
             std::fs::write(path, content).with_context(|| format!("writing {}", path.display()))
         }
+        Item::Symlink { path, target, .. } => {
+            if std::fs::symlink_metadata(path).is_ok() {
+                return Ok(()); // `check` confirmed it is already our link
+            }
+            std::fs::create_dir_all(path.parent().unwrap())?;
+            std::os::unix::fs::symlink(target, path).with_context(|| format!("linking {}", path.display()))
+        }
         Item::ClaudeHooks { path, bin } => edit_json(path, |v| add_claude_hooks(v, bin)),
     }
 }
 
 fn remove(args: &Args) -> Result<()> {
     let mut manifest = Manifest::load();
-    let (gone, keep): (Vec<_>, Vec<_>) =
-        manifest.items.drain(..).partition(|i| args.agents.is_empty() || args.agents.contains(&i.agent()));
-    manifest.items = keep;
+    let mut gone = Vec::new();
+    for mut item in std::mem::take(&mut manifest.items) {
+        if args.agents.is_empty() {
+            gone.push(item);
+            continue;
+        }
+        // A shared file goes only when no remaining agent uses it.
+        if let Item::File { agents, .. } = &mut item {
+            agents.retain(|a| !args.agents.contains(a));
+            if agents.is_empty() {
+                gone.push(item);
+            } else {
+                manifest.items.push(item);
+            }
+        } else if args.agents.iter().any(|a| item.used_by(*a)) {
+            gone.push(item);
+        } else {
+            manifest.items.push(item);
+        }
+    }
     if gone.is_empty() {
         println!("todai setup: nothing recorded to remove.");
         return Ok(());
@@ -191,6 +262,13 @@ fn remove(args: &Args) -> Result<()> {
                 }
                 Err(_) => {}
             },
+            Item::Symlink { path, target, .. } => {
+                let ours = std::fs::symlink_metadata(path).is_ok_and(|m| m.is_symlink())
+                    && std::fs::read_link(path).is_ok_and(|t| t == *target);
+                if ours {
+                    std::fs::remove_file(path)?;
+                }
+            }
             Item::ClaudeHooks { path, .. } if path.exists() => {
                 edit_json(path, remove_claude_hooks)?;
                 // Don't leave behind a settings file that only existed for us.
@@ -288,14 +366,6 @@ impl Manifest {
         std::fs::create_dir_all(path.parent().unwrap())?;
         std::fs::write(path, serde_json::to_string_pretty(self)?)?;
         Ok(())
-    }
-}
-
-fn same_target(a: &Item, b: &Item) -> bool {
-    match (a, b) {
-        (Item::File { path: x, .. }, Item::File { path: y, .. }) => x == y,
-        (Item::ClaudeHooks { path: x, .. }, Item::ClaudeHooks { path: y, .. }) => x == y,
-        _ => false,
     }
 }
 
@@ -404,22 +474,20 @@ mod tests {
 
     #[test]
     fn plan_paths_per_scope() {
-        let base = Path::new("/p");
-        let items = plan(&[Agent::Pi, Agent::Generic, Agent::Claude], Scope::Project, base, "todai");
-        let paths: Vec<String> = items
-            .iter()
-            .map(|i| match i {
-                Item::File { path, .. } | Item::ClaudeHooks { path, .. } => path.display().to_string(),
-            })
-            .collect();
+        let items = plan(&[Agent::Pi, Agent::Generic, Agent::Claude], Scope::Project, Path::new("/p"), "todai");
+        let paths: Vec<_> = items.iter().map(|i| i.path().display().to_string()).collect();
         assert_eq!(paths, [
-            "/p/.agents/skills/todai/SKILL.md", // shared by pi and generic, written once
+            "/p/.agents/skills/todai/SKILL.md",
             "/p/.pi/extensions/todai.ts",
-            "/p/.claude/skills/todai/SKILL.md",
+            "/p/.claude/skills/todai",
             "/p/.claude/settings.local.json",
         ]);
+        // One shared skill, recorded for every agent that needs it.
+        assert!(matches!(&items[0], Item::File { agents, .. } if *agents == [Agent::Pi, Agent::Generic, Agent::Claude]));
+        assert!(matches!(&items[2], Item::Symlink { target, .. } if target == Path::new("../../.agents/skills/todai")));
+
         let user = plan(&[Agent::Pi, Agent::Claude], Scope::User, Path::new("/h"), "todai");
-        assert!(user.iter().any(|i| matches!(i, Item::File { path, .. } if path.ends_with(".pi/agent/extensions/todai.ts"))));
+        assert!(user.iter().any(|i| i.path().ends_with(".pi/agent/extensions/todai.ts")));
         assert!(user.iter().any(|i| matches!(i, Item::ClaudeHooks { path, .. } if path.ends_with(".claude/settings.json"))));
         let ext = items.iter().find_map(|i| match i {
             Item::File { path, content, .. } if path.ends_with("todai.ts") => Some(content),

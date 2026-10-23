@@ -34,7 +34,7 @@ Setup lists every file it will write or change and asks first.
 `todai setup --remove` undoes exactly that.
 
 Then, in a session, tell your agent **"use todai"**. It runs `todai attach`,
-which creates `.todai/board.jsonl` at the repo root and opens the window, and
+which creates `.agents/todai/board.jsonl` at the repo root and opens the window, and
 from then on sends its questions and manual steps to the board.
 
 | Agent | What setup installs | How your answers reach the agent |
@@ -72,7 +72,7 @@ Full reference: [docs/keyboard.md](docs/keyboard.md).
 | `todai open [FILE...]` | open boards in the window (`--foreground` to run attached) |
 | `todai tabs` | list open tabs |
 | `todai setup` | install agent integrations (`--agent`, `--scope`, `--dry-run`, `--remove`) |
-| `todai attach [NAME]` | *agent*: start using `.todai/NAME.jsonl` and print its path |
+| `todai attach [NAME]` | *agent*: start using `.agents/todai/NAME.jsonl` and print its path |
 | `todai guide` | *agent*: print the protocol |
 | `todai add-decision BOARD TITLE [-c CONTEXT] [-o OPTION]...` | *agent*: ask |
 | `todai add-todo BOARD TITLE [-c CONTEXT]` | *agent*: hand over a manual step |
@@ -86,7 +86,8 @@ Full reference: [docs/keyboard.md](docs/keyboard.md).
 
 | Path | What |
 |---|---|
-| `.todai/NAME.jsonl` | a board (one per workflow); gitignore it or commit it as a decision record |
+| `.agents/todai/NAME.jsonl` | a board (one per workflow); gitignore it or commit it as a decision record |
+| `.agents/skills/todai/` | the skill, if installed for the project (linked from `.claude/skills/todai` for Claude Code) |
 | `~/.config/todai/config.json` | theme and input mode |
 | `~/.local/state/todai/` | open tabs, setup records, hook state, window log |
 | `$XDG_RUNTIME_DIR/todai.sock` | the running window's socket |
