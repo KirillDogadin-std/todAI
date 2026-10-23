@@ -534,7 +534,9 @@ fn default_fonts_have_glyphs_we_use() {
     // Every symbol drawn outside plain text. Many arrows and checkmarks
     // (→ ✓ ✔ ▶) are NOT in egui's default fonts and render as boxes.
     let src = [include_str!("mod.rs"), include_str!("board.rs")].concat();
-    let used: String = src.chars().filter(|c| !c.is_ascii()).collect();
+    // 💀 is only in the window title and notifications, which the compositor
+    // and notification daemon draw with system fonts; egui can't draw it.
+    let used: String = src.chars().filter(|c| !c.is_ascii() && *c != '💀').collect();
     let missing: String = used.chars().filter(|c| !ctx.fonts_mut(|f| f.has_glyph(&font, *c))).collect();
     assert!(missing.is_empty(), "default fonts lack: {missing}");
 }

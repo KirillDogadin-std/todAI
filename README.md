@@ -1,4 +1,4 @@
-# todai
+# 💀 todai
 
 A small native board where your coding agent puts **decisions it needs from
 you** and **things only you can do by hand**, so they stop scrolling past in

@@ -100,7 +100,7 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
 pub fn run(listener: UnixListener, socket: PathBuf, paths: Vec<PathBuf>) -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("todai")
+            .with_title("💀 todai")
             .with_app_id("todai")
             .with_inner_size([900.0, 700.0]),
         ..Default::default()
@@ -202,7 +202,7 @@ impl App {
             if posts.len() > 5 {
                 body.push(format!("and {} more", posts.len() - 5));
             }
-            let summary = format!("todai · {}", t.title());
+            let summary = format!("💀 todai · {}", t.title());
             let child = std::process::Command::new("notify-send")
                 .args(["--app-name=todai", &summary, &body.join("\n")])
                 .stdout(std::process::Stdio::null())
