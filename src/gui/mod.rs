@@ -41,6 +41,8 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("Enter  i  a", "answer item / toggle section / jump to elaborated item"),
             ("1-9", "pick option N, then Enter to submit"),
             ("x", "todo done / undone; reopen decision"),
+            ("space", "in Done: mark / unmark (multi-select)"),
+            ("d", "in Done: remove marked items, or this one, from the board"),
             ("e", "elaborate on the whole item"),
             ("v  V", "select text / select all (visual)"),
             ("za  space", "toggle section (zo / zc open / close)"),
@@ -292,40 +294,35 @@ impl App {
         if !self.confirm_quit {
             return false;
         }
-        let (mut yes, mut no) = (false, false);
-        ctx.input_mut(|i| {
-            i.events.retain(|ev| match ev {
-                egui::Event::Key { key, pressed, .. } => {
-                    yes |= *pressed && *key == Key::Enter;
-                    no |= *pressed && *key == Key::Escape;
-                    false
-                }
-                egui::Event::Text(t) => {
-                    yes |= t == "y";
-                    no |= t == "n";
-                    false
-                }
-                _ => true,
-            });
-        });
-        let modal = egui::Modal::new(egui::Id::new("quit")).show(ctx, |ui| {
-            ui.set_width(320.0);
-            ui.heading("Close todai?");
-            ui.add_space(4.0);
-            ui.label("Open tabs come back the next time you run todai.");
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                yes |= ui.button("Close window").clicked();
-                no |= ui.button("Cancel").clicked();
-                ui.weak("Enter / y · Esc / n");
-            });
-        });
-        if yes {
-            self.closing = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        let body = "Open tabs come back the next time you run todai.";
+        match confirm(ctx, "quit", "Close todai?", body, "Close window") {
+            Some(true) => {
+                self.closing = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Some(false) => self.confirm_quit = false,
+            None => {}
         }
-        if no || modal.should_close() {
-            self.confirm_quit = false;
+        true
+    }
+
+    fn trash_dialog(&mut self, ctx: &egui::Context) -> bool {
+        let Some(tab) = self.tabs.get_mut(self.active) else { return false };
+        let Some(ids) = tab.confirm_trash.clone() else { return false };
+        let title = match ids.len() {
+            1 => format!("Remove {} from the board?", ids[0]),
+            n => format!("Remove {n} items from the board?"),
+        };
+        let body = format!("{}\nThey are gone from the board for good; the agent is not told.", ids.join(", "));
+        match confirm(ctx, "trash", &title, &body, "Remove") {
+            Some(true) => {
+                tab.confirm_trash = None;
+                if tab.send(Kind::Trash { ids }) {
+                    tab.nav.marked.clear();
+                }
+            }
+            Some(false) => tab.confirm_trash = None,
+            None => {}
         }
         true
     }
@@ -470,7 +467,7 @@ impl eframe::App for App {
         self.shortcuts(&ctx);
 
         let vim = self.vim();
-        let dialog = self.quit_dialog(&ctx);
+        let dialog = self.quit_dialog(&ctx) || self.trash_dialog(&ctx);
         let mut outcome = None;
         if !dialog && let Some(tab) = self.tabs.get_mut(self.active) {
             outcome = Some(tab.nav.handle(&ctx, &tab.state, &mut tab.drafts, vim));
@@ -481,6 +478,9 @@ impl eframe::App for App {
             }
             if o.close_cheatsheet {
                 self.cheatsheet = false;
+            }
+            if let (Some(ids), Some(tab)) = (&o.trash, self.tabs.get_mut(self.active)) {
+                tab.confirm_trash = Some(ids.clone());
             }
             self.step_tab(o.tab_step);
         }
@@ -514,7 +514,8 @@ fn draw_tab(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache, vim: boo
     let char_w = ui.ctx().fonts_mut(|f| f.glyph_width(&font, 'n'));
     let split = ui.available_width() >= SPLIT_CHARS * char_w;
 
-    let mut board = Board { state: &tab.state, drafts: &mut tab.drafts, nav: &mut tab.nav, md, vim, out: Vec::new() };
+    let mut board =
+        Board { state: &tab.state, drafts: &mut tab.drafts, nav: &mut tab.nav, md, vim, out: Vec::new(), trash: None };
     if split {
         let half = ui.available_width() / 2.0;
         Panel::right("elaborations").resizable(true).default_size(half).show(ui, |ui| {
@@ -526,6 +527,9 @@ fn draw_tab(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache, vim: boo
     }
     egui::CentralPanel::default_margins().show(ui, |ui| board.left_column(ui, !split));
     actions.extend(board.out);
+    if let Some(ids) = board.trash {
+        tab.confirm_trash = Some(ids);
+    }
     tab.nav.end_render();
 
     for kind in actions {
@@ -614,6 +618,46 @@ fn prompt_panel(ui: &mut egui::Ui, tab: &mut Tab, actions: &mut Vec<Kind>) {
     }
     if cancel {
         nav.prompt = None;
+    }
+}
+
+/// A yes/no dialog that owns the keyboard while shown: `Enter`/`y` confirm,
+/// `Esc`/`n` cancel. Returns `None` while undecided.
+fn confirm(ctx: &egui::Context, id: &str, title: &str, body: &str, yes_label: &str) -> Option<bool> {
+    let (mut yes, mut no) = (false, false);
+    ctx.input_mut(|i| {
+        i.events.retain(|ev| match ev {
+            egui::Event::Key { key, pressed, .. } => {
+                yes |= *pressed && *key == Key::Enter;
+                no |= *pressed && *key == Key::Escape;
+                false
+            }
+            egui::Event::Text(t) => {
+                yes |= t == "y";
+                no |= t == "n";
+                false
+            }
+            _ => true,
+        });
+    });
+    let modal = egui::Modal::new(egui::Id::new(id)).show(ctx, |ui| {
+        ui.set_width(340.0);
+        ui.heading(title);
+        ui.add_space(4.0);
+        ui.add(egui::Label::new(body).wrap());
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            yes |= ui.button(yes_label).clicked();
+            no |= ui.button("Cancel").clicked();
+            ui.weak("Enter / y · Esc / n");
+        });
+    });
+    if yes {
+        Some(true)
+    } else if no || modal.should_close() {
+        Some(false)
+    } else {
+        None
     }
 }
 

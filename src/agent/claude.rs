@@ -79,7 +79,7 @@ fn take_updates(board: &Path) -> Result<Option<String>> {
     let (events, state) = log.load_state()?;
     let pending = unprocessed(&events, &state);
     let Some(upto) = pending.last().map(|e| e.seq) else { return Ok(None) };
-    let summary = inbox::summarize(board, &pending, &state);
+    let summary = inbox::summarize(board, &events, &pending);
     log.append(Actor::Agent, |_| Ok(Kind::Ack { upto_seq: upto }))?;
     Ok(Some(summary))
 }

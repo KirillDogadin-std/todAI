@@ -22,6 +22,8 @@ pub struct Board<'a> {
     pub md: &'a mut CommonMarkCache,
     pub vim: bool,
     pub out: Vec<Kind>,
+    /// Set when the operator asks to remove items; the app confirms first.
+    pub trash: Option<Vec<String>>,
 }
 
 impl Board<'_> {
@@ -62,8 +64,12 @@ impl Board<'_> {
                 self.section(ui, Section::Elabs, &title, |b, ui| b.elaborations(ui, false));
             }
 
+            self.nav.marked.retain(|id| state.is_finished(id));
             let title = format!("Done  {}", made.len() + done.len());
             self.section(ui, Section::Done, &title, |b, ui| {
+                if !made.is_empty() || !done.is_empty() {
+                    b.trash_bar(ui, made.iter().map(|d| &d.id).chain(done.iter().map(|t| &t.id)));
+                }
                 subheading(ui, "Decisions made");
                 if made.is_empty() {
                     ui.weak("None yet.");
@@ -195,6 +201,31 @@ impl Board<'_> {
         });
     }
 
+    /// Select all / Clear / Trash selected, above the finished items.
+    fn trash_bar<'s>(&mut self, ui: &mut Ui, all: impl Iterator<Item = &'s String>) {
+        let marked = &mut self.nav.marked;
+        ui.horizontal(|ui| {
+            if ui.small_button("Select all").clicked() {
+                marked.extend(all.cloned());
+            }
+            if !marked.is_empty() && ui.small_button("Clear").clicked() {
+                marked.clear();
+            }
+            let n = marked.len();
+            let trash = Button::new(format!("🗑 Trash selected ({n})")).small();
+            if ui.add_enabled(n > 0, trash).on_hover_text("Remove from the board · space marks, d removes").clicked() {
+                self.trash = Some(marked.iter().cloned().collect());
+            }
+        });
+        ui.add_space(4.0);
+    }
+
+    fn trash_button(&mut self, ui: &mut Ui, id: &str) {
+        if ui.small_button("🗑").on_hover_text("Remove from the board (d)").clicked() {
+            self.trash = Some(vec![id.to_owned()]);
+        }
+    }
+
     /// A resolved or withdrawn decision in the Done section.
     fn resolved_card(&mut self, ui: &mut Ui, d: &Decision) {
         let focus = Focus::Item(d.id.clone());
@@ -213,6 +244,7 @@ impl Board<'_> {
                 }
             }
             ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                b.trash_button(ui, &d.id);
                 b.elaborate_button(ui, &focus, selected);
                 let resolved = matches!(d.status, DecisionStatus::Resolved { .. });
                 if resolved && ui.small_button("Reopen").on_hover_text("x").clicked() {
@@ -231,6 +263,7 @@ impl Board<'_> {
                 ui.add(Label::new(RichText::new(format!("note: {n}")).weak()).wrap());
             }
             ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                b.trash_button(ui, &t.id);
                 b.elaborate_button(ui, &focus, selected);
                 if ui.small_button("Undo").on_hover_text("x").clicked() {
                     b.out.push(Kind::TodoUndone { id: t.id.clone() });
@@ -241,7 +274,14 @@ impl Board<'_> {
 
     /// Item id plus its selectable text. Returns the mouse selection, if any.
     fn item_header(&mut self, ui: &mut Ui, id: &str, focus: &Focus) -> Option<String> {
+        let markable = self.state.is_finished(id);
         ui.horizontal_top(|ui| {
+            if markable {
+                let mut marked = self.nav.marked.contains(id);
+                if ui.checkbox(&mut marked, "").on_hover_text("Select (space)").changed() {
+                    self.nav.toggle_mark(id);
+                }
+            }
             ui.label(RichText::new(id).monospace().weak());
             self.item_text(ui, focus)
         })

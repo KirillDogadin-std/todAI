@@ -32,9 +32,11 @@ events in order. Always write through `todai`; it validates every event.
 | `todo.undone` | operator | `id` | it isn't after all |
 | `elab.request` | operator | `rid` (`rN`), `target` (item id), `selection`, `note`? | "explain this part" |
 | `elab.add` | agent | `rid`, `text_md` | the explanation, as markdown |
+| `item.trash` | operator | `ids` | remove finished items (resolved or withdrawn decisions, done todos) and their elaborations from the board |
 | `ack` | agent | `upto_seq` | the agent has seen operator events up to this seq |
 
 Ids are assigned by the writer: `d`, `t` and `r` followed by a counter.
+Trashed ids are never reused.
 
 ## Rules
 
@@ -46,6 +48,10 @@ Ids are assigned by the writer: `d`, `t` and `r` followed by a counter.
   it, validates, assigns `seq` and ids, and appends one line. The agent's CLI
   calls, hooks and the window can write at the same time safely.
 - **Crashes.** A torn last line (no trailing newline) is ignored on read.
+- **Trash.** Only finished items can be trashed. Operator actions on a
+  trashed item are rejected; the agent's late `decision.withdraw` or
+  `elab.add` for one is accepted and ignored, so agents never fail because
+  the operator tidied up.
 - **Delivery.** Operator events with `seq` above the highest `ack` are
-  *unprocessed*. `todai inbox`, `todai wait` and the agent adapters print them
+  *unprocessed* (except `item.trash`, which agents are never told about). `todai inbox`, `todai wait` and the agent adapters print them
   and then ack exactly the events they printed, so each is delivered once.

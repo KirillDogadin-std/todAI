@@ -4,7 +4,7 @@
 //! the previous frame's render; the board then re-records them. Mouse works in
 //! every mode; `vim == false` only turns off the single-key commands.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use egui::{Event, Galley, Key, Modifiers};
@@ -89,6 +89,8 @@ pub struct Outcome {
     pub tab_step: i32,
     pub toggle_cheatsheet: bool,
     pub close_cheatsheet: bool,
+    /// Items to remove from the board, once the operator confirms.
+    pub trash: Option<Vec<String>>,
 }
 
 pub struct Nav {
@@ -106,6 +108,8 @@ pub struct Nav {
     pub input_focused: Option<String>,
     pub prompt_focused: bool,
     pub mouse_selection: Option<MouseSelection>,
+    /// Finished items marked for removal (multi-select).
+    pub marked: BTreeSet<String>,
     /// Where each item's text was drawn last frame (for tests driving the mouse).
     #[cfg(test)]
     pub text_rects: Vec<(Focus, egui::Rect)>,
@@ -128,6 +132,7 @@ impl Default for Nav {
             input_focused: None,
             prompt_focused: false,
             mouse_selection: None,
+            marked: BTreeSet::new(),
             #[cfg(test)]
             text_rects: Vec::new(),
             prefix: None,
@@ -395,9 +400,19 @@ impl Nav {
             'h' => self.go_left(state),
             'l' => self.go_right(state),
             'i' | 'a' => self.activate(state),
-            ' ' => {
-                if let Some(Focus::Section(_)) = self.cursor {
-                    self.toggle_section_at_cursor();
+            ' ' => match self.cursor.clone() {
+                Some(Focus::Section(_)) => self.toggle_section_at_cursor(),
+                Some(Focus::Item(id)) if state.is_finished(&id) => self.toggle_mark(&id),
+                _ => {}
+            },
+            'd' => {
+                let ids: Vec<String> = match &self.cursor {
+                    _ if !self.marked.is_empty() => self.marked.iter().cloned().collect(),
+                    Some(Focus::Item(id)) if state.is_finished(id) => vec![id.clone()],
+                    _ => Vec::new(),
+                };
+                if !ids.is_empty() {
+                    out.trash = Some(ids);
                 }
             }
             '1'..='9' => self.pick_option(c as usize - '1' as usize, state, drafts),
@@ -530,6 +545,12 @@ impl Nav {
                 }
             }
             None => {}
+        }
+    }
+
+    pub fn toggle_mark(&mut self, id: &str) {
+        if !self.marked.remove(id) {
+            self.marked.insert(id.to_owned());
         }
     }
 

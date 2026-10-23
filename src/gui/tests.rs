@@ -51,7 +51,12 @@ impl Harness {
             tab.reload_if_dirty();
             // Multi-pass frames re-run this closure; keys must apply once.
             let kinds = if std::mem::take(&mut events_once) {
-                tab.nav.handle(ui.ctx(), &tab.state, &mut tab.drafts, vim).kinds
+                let o = tab.nav.handle(ui.ctx(), &tab.state, &mut tab.drafts, vim);
+                // As App::ui does: a trash request waits for confirmation.
+                if o.trash.is_some() {
+                    tab.confirm_trash = o.trash;
+                }
+                o.kinds
             } else {
                 Vec::new()
             };
@@ -310,6 +315,51 @@ fn notifications_only_for_new_agent_posts() {
     h.log.append(Actor::Operator, |_| Ok(Kind::TodoDone { id: "t1".into(), note: None })).unwrap();
     h.tab.reload_if_dirty_now();
     assert_eq!(h.tab.new_posts, ["Decision d3: New?"], "operator events never notify");
+}
+
+/// Resolves d1 and finishes t1 so the Done section has two items, opened.
+fn harness_with_done() -> Harness {
+    let mut h = Harness::new();
+    let op = |k: Kind| h.log.append(Actor::Operator, |_| Ok(k)).unwrap();
+    op(Kind::DecisionResolve { id: "d1".into(), text: "egui".into() });
+    op(Kind::TodoDone { id: "t1".into(), note: None });
+    h.tab.reload_if_dirty_now();
+    h.frame(vec![]);
+    h.type_keys("G"); // Done header
+    h.type_keys("l"); // expand
+    h
+}
+
+#[test]
+fn space_marks_and_d_trashes_after_confirm() {
+    let mut h = harness_with_done();
+    h.move_to(item("d1"));
+    h.type_keys(" ");
+    h.move_to(item("t1"));
+    h.type_keys(" ");
+    assert_eq!(h.tab.nav.marked.len(), 2);
+    h.type_keys("d");
+    assert_eq!(h.tab.confirm_trash.as_deref(), Some(&["d1".to_owned(), "t1".to_owned()][..]));
+    // Board::frame doesn't run the app's dialog; confirm the way it does.
+    let ids = h.tab.confirm_trash.take().unwrap();
+    assert!(h.tab.send(Kind::Trash { ids }));
+    let s = h.state();
+    assert!(s.decision("d1").is_none() && s.todo("t1").is_none());
+    assert!(s.decision("d2").is_some(), "pending items untouched");
+}
+
+#[test]
+fn d_without_marks_trashes_cursor_item_only_if_finished() {
+    let mut h = harness_with_done();
+    h.move_to(item("t1"));
+    h.type_keys("d");
+    assert_eq!(h.tab.confirm_trash.as_deref(), Some(&["t1".to_owned()][..]));
+
+    let mut h = Harness::new();
+    h.move_to(item("d1")); // pending
+    h.type_keys(" ");
+    h.type_keys("d");
+    assert!(h.tab.nav.marked.is_empty() && h.tab.confirm_trash.is_none(), "pending items can't be marked");
 }
 
 #[test]

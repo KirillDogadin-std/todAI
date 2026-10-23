@@ -131,6 +131,12 @@ enum Cmd {
     },
     /// [operator] Mark a todo not done.
     Undone { file: PathBuf, id: String },
+    /// [operator] Remove finished items (and their elaborations) from the board.
+    Trash {
+        file: PathBuf,
+        #[arg(required = true)]
+        ids: Vec<String>,
+    },
     /// [operator] Request an elaboration on part of an item.
     Ask {
         file: PathBuf,
@@ -264,6 +270,9 @@ pub fn run(cli: Cli) -> Result<()> {
         Cmd::Done { file, id, note } => {
             log(&file)?.append(Actor::Operator, |_| Ok(Kind::TodoDone { id, note }))?;
         }
+        Cmd::Trash { file, ids } => {
+            log(&file)?.append(Actor::Operator, |_| Ok(Kind::Trash { ids }))?;
+        }
         Cmd::Undone { file, id } => {
             log(&file)?.append(Actor::Operator, |_| Ok(Kind::TodoUndone { id }))?;
         }
@@ -364,7 +373,7 @@ fn print_inbox(log: &Log, ack: bool) -> Result<bool> {
     let Some(upto) = pending.last().map(|e| e.seq) else {
         return Ok(false);
     };
-    print!("{}", inbox::summarize(log.path(), &pending, &state));
+    print!("{}", inbox::summarize(log.path(), &events, &pending));
     if ack {
         log.append(Actor::Agent, |_| Ok(Kind::Ack { upto_seq: upto }))?;
     }

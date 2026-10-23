@@ -24,6 +24,8 @@ The status bar shows the current state: `NORMAL`, `INSERT`, `VISUAL`,
 | `Enter` · `i` · `a` | answer the item (decision resolution or todo note); toggle a section; on an elaboration, jump to its item |
 | `1`–`9` | pick option N into the answer, then `Enter` submits |
 | `x` | todo done ↔ not done; reopen a resolved decision |
+| `space` | in Done: mark / unmark the item (multi-select) |
+| `d` | in Done: remove the marked items, or the one under the cursor, from the board (asks first) |
 | `e` | elaborate on the whole item |
 | `v` · `V` | select text in the item (visual mode) / select all of it |
 | `za` · `space` | toggle the section (`zo` open, `zc` close) |
@@ -75,6 +77,8 @@ Answer fields, todo notes and the elaboration message:
   **Elaborate**. With no selection, those act on the whole item.
 - **Follow up** on an answered elaboration asks about the answer.
 - Section headers toggle on click.
+- **Clean up Done:** tick items' checkboxes (or **Select all**), then
+  **🗑 Trash selected**; or a card's own 🗑. A dialog confirms first.
 
 ## Layout
 

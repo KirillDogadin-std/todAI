@@ -3,15 +3,20 @@
 
 use std::path::Path;
 
-use crate::store::{Event, Kind, State};
+use crate::store::{Event, Kind};
 
-pub fn summarize(file: &Path, events: &[&Event], state: &State) -> String {
+/// `log` is the whole board; titles come from its add events, so items the
+/// operator already trashed still read properly.
+pub fn summarize(file: &Path, log: &[Event], events: &[&Event]) -> String {
     let f = file.display();
     let title = |id: &str| {
-        state
-            .decision(id)
-            .map(|d| d.title.as_str())
-            .or_else(|| state.todo(id).map(|t| t.title.as_str()))
+        log.iter()
+            .find_map(|e| match &e.kind {
+                Kind::DecisionAdd { id: i, title, .. } | Kind::TodoAdd { id: i, title, .. } if i == id => {
+                    Some(title.as_str())
+                }
+                _ => None,
+            })
             .unwrap_or("?")
     };
     let mut out = format!("todai: operator updates in {f}\n");

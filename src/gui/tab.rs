@@ -18,6 +18,8 @@ pub struct Tab {
     pub drafts: HashMap<String, String>,
     pub error: Option<String>,
     pub nav: Nav,
+    /// Items waiting for the operator to confirm their removal.
+    pub confirm_trash: Option<Vec<String>>,
     /// Agent posts seen since the last check, for desktop notifications.
     pub new_posts: Vec<String>,
     /// Highest seq loaded so far; `None` until the first load, so opening a
@@ -37,6 +39,7 @@ impl Tab {
             drafts: HashMap::new(),
             error: None,
             nav: Nav::default(),
+            confirm_trash: None,
             new_posts: Vec::new(),
             seen_seq: None,
             dirty: dirty.clone(),
