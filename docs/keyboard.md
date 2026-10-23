@@ -80,7 +80,8 @@ Answer fields, todo notes and the elaboration message:
 - Section headers toggle on click.
 - **Clean up:** tick checkboxes on finished items or elaborations (or
   **Select all** in Done), then **🗑 Trash selected**; or a card's own 🗑. A
-  dialog confirms first.
+  dialog confirms first. Shift-click a checkbox to select everything between
+  it and the last one you clicked, within Done or within the elaborations.
 - **Elaborations** fold: **more** / **less**, or click a collapsed preview.
 
 ## Layout

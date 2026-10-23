@@ -420,6 +420,27 @@ fn elaborations_can_be_marked_and_trashed() {
 }
 
 #[test]
+fn shift_click_marks_a_range_within_one_group() {
+    let mut h = harness_with_done(); // Done: d1, then t1
+    h.log.append(Actor::Operator, |_| Ok(Kind::DecisionResolve { id: "d2".into(), text: "x".into() })).unwrap();
+    h.tab.reload_if_dirty_now();
+    h.frame(vec![]); // Done order is now d1, d2, t1
+    assert_eq!(h.tab.nav.mark_groups[0], ["d1", "d2", "t1"]);
+
+    h.tab.nav.click_mark("d1", false);
+    h.tab.nav.click_mark("t1", true);
+    h.frame(vec![]);
+    assert_eq!(h.tab.nav.marked.iter().collect::<Vec<_>>(), ["d1", "d2", "t1"]);
+
+    // Shift-click into another group only toggles that item.
+    h.tab.nav.marked.clear();
+    h.tab.nav.click_mark("t1", false);
+    h.tab.nav.click_mark("r9", true);
+    h.frame(vec![]);
+    assert_eq!(h.tab.nav.marked.iter().collect::<Vec<_>>(), ["r9", "t1"]);
+}
+
+#[test]
 fn closing_tabs_keeps_active_index_valid() {
     use super::active_after_close as after;
     assert_eq!(after(2, 0, 2), 1, "closing a tab left of the active one shifts it");

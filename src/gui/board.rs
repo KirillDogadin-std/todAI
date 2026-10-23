@@ -66,6 +66,7 @@ impl Board<'_> {
                 if !made.is_empty() || !done.is_empty() {
                     b.trash_bar(ui, made.iter().map(|d| &d.id).chain(done.iter().map(|t| &t.id)));
                 }
+                b.nav.mark_groups.push(made.iter().map(|d| d.id.clone()).chain(done.iter().map(|t| t.id.clone())).collect());
                 subheading(ui, "Decisions made");
                 if made.is_empty() {
                     ui.weak("None yet.");
@@ -100,6 +101,7 @@ impl Board<'_> {
                 .or_else(|| state.todo(id).map(|t| t.title.as_str()))
                 .unwrap_or("")
         };
+        self.nav.mark_groups.push(state.elabs.iter().rev().map(|r| r.rid.clone()).collect());
         for r in state.elabs.iter().rev() {
             let focus = Focus::Elab(r.rid.clone());
             if right {
@@ -110,10 +112,7 @@ impl Board<'_> {
             let open = self.nav.elab_is_open(state, &r.rid);
             self.card(ui, &focus, |b, ui| {
                 ui.horizontal(|ui| {
-                    let mut marked = b.nav.marked.contains(&r.rid);
-                    if ui.checkbox(&mut marked, "").on_hover_text("Select (space)").changed() {
-                        b.nav.toggle_mark(&r.rid);
-                    }
+                    b.mark_checkbox(ui, &r.rid);
                     ui.label(RichText::new(&r.rid).monospace().weak());
                     ui.label(RichText::new(format!("on {}", r.target)).monospace().weak());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -242,6 +241,15 @@ impl Board<'_> {
         ui.add_space(4.0);
     }
 
+    fn mark_checkbox(&mut self, ui: &mut Ui, id: &str) {
+        // The checkbox flips its own copy; `click_mark` decides what changes.
+        let mut marked = self.nav.marked.contains(id);
+        let r = ui.checkbox(&mut marked, "").on_hover_text("Select (space) · shift-click selects a range");
+        if r.clicked() {
+            self.nav.click_mark(id, ui.input(|i| i.modifiers.shift));
+        }
+    }
+
     fn trash_button(&mut self, ui: &mut Ui, id: &str) {
         if ui.small_button("🗑").on_hover_text("Remove from the board (d)").clicked() {
             self.trash = Some(vec![id.to_owned()]);
@@ -299,10 +307,7 @@ impl Board<'_> {
         let markable = self.state.is_finished(id);
         ui.horizontal_top(|ui| {
             if markable {
-                let mut marked = self.nav.marked.contains(id);
-                if ui.checkbox(&mut marked, "").on_hover_text("Select (space)").changed() {
-                    self.nav.toggle_mark(id);
-                }
+                self.mark_checkbox(ui, id);
             }
             ui.label(RichText::new(id).monospace().weak());
             self.item_text(ui, focus)

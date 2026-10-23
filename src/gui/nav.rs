@@ -113,6 +113,13 @@ pub struct Nav {
     /// Elaborations the operator expanded or collapsed by hand; the rest
     /// follow `elab_auto_open`.
     pub elab_open: HashMap<String, bool>,
+    /// Last item marked by itself; shift-click marks from here.
+    mark_anchor: Option<String>,
+    /// Markable ids per group (Done items, elaborations) in display order,
+    /// recorded each frame.
+    pub mark_groups: Vec<Vec<String>>,
+    /// A shift-click waiting for the frame's groups to be complete.
+    range_target: Option<String>,
     /// Where each item's text was drawn last frame (for tests driving the mouse).
     #[cfg(test)]
     pub text_rects: Vec<(Focus, egui::Rect)>,
@@ -137,6 +144,9 @@ impl Default for Nav {
             mouse_selection: None,
             marked: BTreeSet::new(),
             elab_open: HashMap::new(),
+            mark_anchor: None,
+            mark_groups: Vec::new(),
+            range_target: None,
             #[cfg(test)]
             text_rects: Vec::new(),
             prefix: None,
@@ -222,6 +232,7 @@ impl Nav {
         self.right.clear();
         self.input_focused = None;
         self.prompt_focused = false;
+        self.mark_groups.clear();
         #[cfg(test)]
         self.text_rects.clear();
     }
@@ -229,6 +240,9 @@ impl Nav {
     /// Call after the board rendered: syncs the mode with widget focus and
     /// keeps the cursor on something that still exists.
     pub fn end_render(&mut self) {
+        if let Some(target) = self.range_target.take() {
+            self.mark_range(target);
+        }
         if self.prompt_focused {
             self.mode = Mode::Prompt;
         } else if let Some(id) = self.input_focused.take() {
@@ -578,6 +592,31 @@ impl Nav {
     pub fn toggle_mark(&mut self, id: &str) {
         if !self.marked.remove(id) {
             self.marked.insert(id.to_owned());
+        }
+        self.mark_anchor = Some(id.to_owned());
+    }
+
+    /// A checkbox click: toggles one item, or with shift marks everything
+    /// from the anchor to `id` when both are in the same group.
+    pub fn click_mark(&mut self, id: &str, shift: bool) {
+        if shift && self.mark_anchor.is_some() {
+            self.range_target = Some(id.to_owned());
+        } else {
+            self.toggle_mark(id);
+        }
+    }
+
+    fn mark_range(&mut self, target: String) {
+        let anchor = self.mark_anchor.clone().unwrap_or_default();
+        let span = self.mark_groups.iter().find_map(|g| {
+            let a = g.iter().position(|x| *x == anchor)?;
+            let b = g.iter().position(|x| *x == target)?;
+            Some(g[a.min(b)..=a.max(b)].to_vec())
+        });
+        match span {
+            Some(ids) => self.marked.extend(ids),
+            // Different groups: a plain toggle, which becomes the new anchor.
+            None => self.toggle_mark(&target),
         }
     }
 
