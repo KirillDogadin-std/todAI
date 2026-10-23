@@ -72,5 +72,5 @@ flow. Run an idle frame after each input so focus changes settle.
 
 ## Commits
 
-- No GPG signing (repo-local `commit.gpgsign=false` is set).
+- No GPG signing unless overridden by higher level instruction (repo-local `commit.gpgsign=false` is set).
 - Small, focused commits with a body explaining why when it isn't obvious.
