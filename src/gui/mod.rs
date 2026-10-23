@@ -141,6 +141,7 @@ impl App {
     fn new(cc: &eframe::CreationContext<'_>, listener: UnixListener, paths: Vec<PathBuf>) -> App {
         let config = Config::load();
         apply_theme(&cc.egui_ctx, config.theme);
+        cc.egui_ctx.set_fonts(font_definitions(system_font("sans-serif")));
         let (tx, requests) = mpsc::channel();
         let ctx = cc.egui_ctx.clone();
         ipc::serve(listener, tx, move || ctx.request_repaint());
@@ -825,6 +826,31 @@ fn confirm(ctx: &egui::Context, id: &str, title: &str, body: &str, yes_label: &s
     } else {
         None
     }
+}
+
+/// Body text: the system's sans-serif first, then egui's bundled fonts, then
+/// Hack (already loaded for monospace), which has arrows and box drawing that
+/// the bundled proportional fonts lack and would draw as boxes.
+fn font_definitions(system: Option<Vec<u8>>) -> egui::FontDefinitions {
+    let mut defs = egui::FontDefinitions::default();
+    let prop = defs.families.entry(egui::FontFamily::Proportional).or_default();
+    prop.push("Hack".to_owned());
+    if let Some(bytes) = system {
+        prop.insert(0, "system".to_owned());
+        defs.font_data.insert("system".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+    }
+    defs
+}
+
+/// The font file fontconfig picks for `family`, if fontconfig is there and
+/// the file parses (egui panics on a font it can't read).
+fn system_font(family: &str) -> Option<Vec<u8>> {
+    let out = std::process::Command::new("fc-match").args(["-f", "%{file}", family]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let bytes = std::fs::read(String::from_utf8(out.stdout).ok()?).ok()?;
+    skrifa::FontRef::from_index(&bytes, 0).is_ok().then_some(bytes)
 }
 
 fn apply_theme(ctx: &egui::Context, theme: Theme) {
