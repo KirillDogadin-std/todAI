@@ -26,7 +26,9 @@ The status bar shows the current state: `NORMAL`, `INSERT`, `VISUAL`,
 | `x` | todo done ↔ not done; reopen a resolved decision |
 | `space` | mark / unmark a finished item or an elaboration (multi-select) |
 | `d` | remove the marked items, or the one under the cursor, from the board (asks first); removing an unanswered elaboration cancels it |
+| `Esc` | clear the selection |
 | `o` · `za` | on an elaboration: expand / collapse it (`zo` / `zc` too) |
+| `zR` · `zM` | expand / collapse all elaborations, or only the selected ones |
 | `e` | elaborate on the whole item |
 | `v` · `V` | select text in the item (visual mode) / select all of it |
 | `za` · `space` | toggle the section (`zo` open, `zc` close) |
@@ -78,10 +80,13 @@ Answer fields, todo notes and the elaboration message:
   **Elaborate**. With no selection, those act on the whole item.
 - **Follow up** on an answered elaboration asks about the answer.
 - Section headers toggle on click.
-- **Clean up:** tick checkboxes on finished items or elaborations (or
-  **Select all** in Done), then **🗑 Trash selected**; or a card's own 🗑. A
-  dialog confirms first. Shift-click a checkbox to select everything between
-  it and the last one you clicked, within Done or within the elaborations.
+- **Select** finished items or elaborations with their checkboxes (or
+  **Select all** in Done). Shift-click a checkbox to select everything
+  between it and the last one you clicked, within Done or within the
+  elaborations.
+- While anything is selected, an **action bar** at the bottom offers
+  **🗑 Delete** (asks first), **Expand** / **Collapse** for the selected
+  elaborations, and **Clear**.
 - **Elaborations** fold: **more** / **less**, or click a collapsed preview.
 
 ## Layout

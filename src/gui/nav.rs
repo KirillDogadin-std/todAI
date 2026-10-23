@@ -331,6 +331,14 @@ impl Nav {
                 _ => {}
             }
         }
+        if self.mode == Mode::Normal
+            && key == Key::Escape
+            && !self.marked.is_empty()
+            && !egui::Popup::is_any_open(ctx)
+        {
+            self.marked.clear();
+            return true;
+        }
         match self.mode {
             Mode::Insert | Mode::Prompt => match key {
                 Key::Escape => {
@@ -411,6 +419,9 @@ impl Nav {
                     };
                     self.elab_open.insert(rid, open);
                 }
+                // zR / zM: expand / collapse every elaboration, or only the
+                // selected ones when any are selected.
+                ('z', 'R' | 'M') => self.fold_elabs(state, c == 'R'),
                 ('z', 'a') => self.toggle_section_at_cursor(),
                 ('z', 'o') => self.section_at_cursor().into_iter().for_each(|s| self.set_open(s, true)),
                 ('z', 'c') => self.section_at_cursor().into_iter().for_each(|s| self.set_open(s, false)),
@@ -594,6 +605,16 @@ impl Nav {
             self.marked.insert(id.to_owned());
         }
         self.mark_anchor = Some(id.to_owned());
+    }
+
+    /// Expands or collapses the selected elaborations, or all of them if none
+    /// are selected.
+    pub fn fold_elabs(&mut self, state: &State, open: bool) {
+        let selected: Vec<String> = self.marked.iter().filter(|id| state.elab(id).is_some()).cloned().collect();
+        let rids = if selected.is_empty() { state.elabs.iter().map(|r| r.rid.clone()).collect() } else { selected };
+        for rid in rids {
+            self.elab_open.insert(rid, open);
+        }
     }
 
     /// A checkbox click: toggles one item, or with shift marks everything

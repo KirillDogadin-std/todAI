@@ -44,6 +44,8 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("space", "mark / unmark a finished item or elaboration (multi-select)"),
             ("d", "remove marked items, or this one, from the board"),
             ("o  za", "on an elaboration: expand / collapse it"),
+            ("zR  zM", "expand / collapse all elaborations (or the selected ones)"),
+            ("Esc", "clear the selection"),
             ("e", "elaborate on the whole item"),
             ("v  V", "select text / select all (visual)"),
             ("za  space", "toggle section (zo / zc open / close)"),
@@ -510,13 +512,14 @@ fn draw_tab(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache, vim: boo
     tab.nav.begin_render();
     status_bar(ui, tab, vim);
     prompt_panel(ui, tab, &mut actions);
+    action_bar(ui, tab);
 
     let font = TextStyle::Body.resolve(ui.style());
     let char_w = ui.ctx().fonts_mut(|f| f.glyph_width(&font, 'n'));
     let split = ui.available_width() >= SPLIT_CHARS * char_w;
 
     let mut board =
-        Board { state: &tab.state, drafts: &mut tab.drafts, nav: &mut tab.nav, md, vim, out: Vec::new(), trash: None };
+        Board { state: &tab.state, drafts: &mut tab.drafts, nav: &mut tab.nav, md, vim, out: Vec::new() };
     if split {
         let half = ui.available_width() / 2.0;
         Panel::right("elaborations").resizable(true).default_size(half).show(ui, |ui| {
@@ -528,9 +531,6 @@ fn draw_tab(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache, vim: boo
     }
     egui::CentralPanel::default_margins().show(ui, |ui| board.left_column(ui, !split));
     actions.extend(board.out);
-    if let Some(ids) = board.trash {
-        tab.confirm_trash = Some(ids);
-    }
     tab.nav.end_render();
 
     for kind in actions {
@@ -572,6 +572,36 @@ fn status_bar(ui: &mut egui::Ui, tab: &Tab, vim: bool) {
                 ui.weak("? keys · Ctrl+Shift+M vim/mouse");
             });
         });
+    });
+}
+
+/// What you can do with the selection; shown only while something is selected.
+fn action_bar(ui: &mut egui::Ui, tab: &mut Tab) {
+    let n = tab.nav.marked.len();
+    if n == 0 {
+        return;
+    }
+    let elabs = tab.nav.marked.iter().filter(|id| tab.state.elab(id).is_some()).count();
+    Panel::bottom("actions").show(ui, |ui| {
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{n} selected")).strong());
+            ui.separator();
+            if ui.button("🗑 Delete").on_hover_text("Remove from the board (d)").clicked() {
+                tab.confirm_trash = Some(tab.nav.marked.iter().cloned().collect());
+            }
+            let fold_hint = |what: &str| format!("{what} the selected elaborations (z{})", if what == "Expand" { 'R' } else { 'M' });
+            if ui.add_enabled(elabs > 0, egui::Button::new("Expand")).on_hover_text(fold_hint("Expand")).clicked() {
+                tab.nav.fold_elabs(&tab.state, true);
+            }
+            if ui.add_enabled(elabs > 0, egui::Button::new("Collapse")).on_hover_text(fold_hint("Collapse")).clicked() {
+                tab.nav.fold_elabs(&tab.state, false);
+            }
+            if ui.button("Clear").on_hover_text("Clear the selection (Esc)").clicked() {
+                tab.nav.marked.clear();
+            }
+        });
+        ui.add_space(2.0);
     });
 }
 

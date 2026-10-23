@@ -22,8 +22,6 @@ pub struct Board<'a> {
     pub md: &'a mut CommonMarkCache,
     pub vim: bool,
     pub out: Vec<Kind>,
-    /// Set when the operator asks to remove items; the app confirms first.
-    pub trash: Option<Vec<String>>,
 }
 
 impl Board<'_> {
@@ -64,7 +62,7 @@ impl Board<'_> {
             let count = (made.len() + done.len()).to_string();
             self.section(ui, Section::Done, "Done", &count, |b, ui| {
                 if !made.is_empty() || !done.is_empty() {
-                    b.trash_bar(ui, made.iter().map(|d| &d.id).chain(done.iter().map(|t| &t.id)));
+                    b.select_all_row(ui, made.iter().map(|d| &d.id).chain(done.iter().map(|t| &t.id)));
                 }
                 b.nav.mark_groups.push(made.iter().map(|d| d.id.clone()).chain(done.iter().map(|t| t.id.clone())).collect());
                 subheading(ui, "Decisions made");
@@ -116,7 +114,6 @@ impl Board<'_> {
                     ui.label(RichText::new(&r.rid).monospace().weak());
                     ui.label(RichText::new(format!("on {}", r.target)).monospace().weak());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        b.trash_button(ui, &r.rid);
                         match &r.answer {
                             Some(_) => {
                                 let (label, hint) = if open { ("less", "Collapse (o)") } else { ("more", "Expand (o)") };
@@ -223,22 +220,13 @@ impl Board<'_> {
     }
 
     /// Select all / Clear / Trash selected, above the finished items.
-    fn trash_bar<'s>(&mut self, ui: &mut Ui, all: impl Iterator<Item = &'s String>) {
-        let marked = &mut self.nav.marked;
-        ui.horizontal(|ui| {
-            if ui.small_button("Select all").clicked() {
-                marked.extend(all.cloned());
-            }
-            if !marked.is_empty() && ui.small_button("Clear").clicked() {
-                marked.clear();
-            }
-            let n = marked.len();
-            let trash = Button::new(format!("🗑 Trash selected ({n})")).small();
-            if ui.add_enabled(n > 0, trash).on_hover_text("Remove from the board · space marks, d removes").clicked() {
-                self.trash = Some(marked.iter().cloned().collect());
-            }
-        });
-        ui.add_space(4.0);
+    /// "Select all" above the finished items; acting on the selection
+    /// happens in the action bar.
+    fn select_all_row<'s>(&mut self, ui: &mut Ui, all: impl Iterator<Item = &'s String>) {
+        if ui.small_button("Select all").on_hover_text("Select every finished item").clicked() {
+            self.nav.marked.extend(all.cloned());
+        }
+        ui.add_space(2.0);
     }
 
     fn mark_checkbox(&mut self, ui: &mut Ui, id: &str) {
@@ -247,12 +235,6 @@ impl Board<'_> {
         let r = ui.checkbox(&mut marked, "").on_hover_text("Select (space) · shift-click selects a range");
         if r.clicked() {
             self.nav.click_mark(id, ui.input(|i| i.modifiers.shift));
-        }
-    }
-
-    fn trash_button(&mut self, ui: &mut Ui, id: &str) {
-        if ui.small_button("🗑").on_hover_text("Remove from the board (d)").clicked() {
-            self.trash = Some(vec![id.to_owned()]);
         }
     }
 
@@ -274,7 +256,6 @@ impl Board<'_> {
                 }
             }
             ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                b.trash_button(ui, &d.id);
                 b.elaborate_button(ui, &focus, selected);
                 let resolved = matches!(d.status, DecisionStatus::Resolved { .. });
                 if resolved && ui.small_button("Reopen").on_hover_text("x").clicked() {
@@ -293,7 +274,6 @@ impl Board<'_> {
                 ui.add(Label::new(RichText::new(format!("note: {n}")).weak()).wrap());
             }
             ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                b.trash_button(ui, &t.id);
                 b.elaborate_button(ui, &focus, selected);
                 if ui.small_button("Undo").on_hover_text("x").clicked() {
                     b.out.push(Kind::TodoUndone { id: t.id.clone() });

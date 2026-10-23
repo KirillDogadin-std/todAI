@@ -441,6 +441,20 @@ fn shift_click_marks_a_range_within_one_group() {
 }
 
 #[test]
+fn zr_zm_fold_selected_or_all_and_esc_clears_selection() {
+    let mut h = harness_with_elabs();
+    let open = |h: &Harness, rid: &str| h.tab.nav.elab_is_open(&h.tab.state, rid);
+    h.type_keys("zM");
+    assert!(!open(&h, "r1") && !open(&h, "r2") && !open(&h, "r3"), "nothing selected: all collapse");
+    h.move_to(Focus::Elab("r2".into()));
+    h.type_keys(" ");
+    h.type_keys("zR");
+    assert!(open(&h, "r2") && !open(&h, "r1"), "with a selection, only it expands");
+    h.key(Key::Escape, Modifiers::NONE);
+    assert!(h.tab.nav.marked.is_empty());
+}
+
+#[test]
 fn closing_tabs_keeps_active_index_valid() {
     use super::active_after_close as after;
     assert_eq!(after(2, 0, 2), 1, "closing a tab left of the active one shifts it");
