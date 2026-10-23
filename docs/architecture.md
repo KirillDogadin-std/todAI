@@ -46,6 +46,9 @@ current state, which is how ids and `seq` stay unique across processes.
   lists them. Existing items never notify when a board is opened.
 - **Hidden windows still answer.** Socket requests are handled in
   `App::logic`, which eframe runs even when the window isn't being drawn.
+  On Wayland vsync is off: compositors send no frame callbacks to hidden
+  windows, so a vsynced `swap_buffers` would block the event loop and the
+  compositor would flag the window as not responding.
 - **Frame order** (`App::ui`): shortcuts → key handling against the previous
   frame's focus lists (`Nav::handle`) → panels → board render, which records
   the new focus lists → `Nav::end_render` syncs mode with widget focus →
