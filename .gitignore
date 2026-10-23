@@ -3,3 +3,5 @@
 # todai boards and personal agent settings (see README)
 /.agents/todai/
 /.claude/settings.local.json
+# Claude Code reads CLAUDE.md; it is a local symlink to AGENTS.md
+/CLAUDE.md

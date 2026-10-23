@@ -3,6 +3,9 @@
 Native board (Rust + egui) where coding agents post decisions and manual todos
 for the operator. Start with `README.md`, then `docs/architecture.md`.
 
+This file is the agent-agnostic `AGENTS.md`. For Claude Code, make a local,
+gitignored symlink: `ln -s AGENTS.md CLAUDE.md`.
+
 ## Build and test
 
 ```sh
