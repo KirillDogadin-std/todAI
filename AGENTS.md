@@ -11,9 +11,15 @@ gitignored symlink: `ln -s AGENTS.md CLAUDE.md`.
 ```sh
 cargo build                 # toolchain pinned to stable via rust-toolchain.toml
 cargo test                  # store, vim motions, IPC, setup merge, headless GUI tests
-cargo build --release       # use this binary for memory or startup measurements
+cargo build --release       # use this binary for memory or startup measurements (see below)
 examples/demo.sh            # populated demo board in a real window (--no-open: just build it)
 ```
+
+Measure memory on the **second** launch of a binary at a given path. On
+NVIDIA, the first launch from a new executable path compiles shaders into
+`~/.cache/nvidia/GLCache`, and the process keeps that heap: about 180 MB RSS
+cold vs about 120 MB warm for the same build. Copying the binary somewhere new
+counts as a new path.
 
 CI (`.github/workflows/ci.yml`) builds and tests with `RUSTFLAGS=-D warnings`, so
 test-only code must be warning-free too: check with
