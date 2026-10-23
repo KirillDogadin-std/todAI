@@ -1,2 +1,5 @@
 /target
 /examples/demo.jsonl
+# todai boards and personal agent settings (see README)
+/.agents/todai/
+/.claude/settings.local.json
