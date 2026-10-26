@@ -2652,6 +2652,17 @@ dependencies = [
  "serde_json",
  "skrifa",
  "tempfile",
+ "todai-core",
+]
+
+[[package]]
+name = "todai-core"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -1,25 +1,46 @@
-[package]
-name = "todai"
+[workspace]
+members = ["crates/todai-core"]
+# `cargo build` / `cargo test` at the root cover every crate.
+default-members = [".", "crates/todai-core"]
+
+[workspace.package]
 version = "0.3.0"
 edition = "2024"
 license = "Apache-2.0"
+
+[workspace.dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tempfile = "3.27.0"
+todai-core = { path = "crates/todai-core" }
+todai-server = { path = "crates/todai-server" }
+
+# The CLI and the desktop window. The headless server is crates/todai-server.
+[package]
+name = "todai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "A native board where coding agents post decisions and manual todos for the operator"
 
 [dependencies]
-anyhow = "1.0.104"
-clap = { version = "4.6.7", features = ["derive"] }
+anyhow.workspace = true
+clap.workspace = true
 eframe = { version = "0.35.0", default-features = false, features = ["glow", "wayland", "x11", "default_fonts"] }
 egui = { version = "0.35", default-features = false }
 egui_commonmark = { version = "0.24.0", default-features = false, features = ["pulldown_cmark"] }
 libc = "0.2.191"
 notify = "8.2.0"
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
+serde.workspace = true
+serde_json.workspace = true
 # Already in the tree via epaint; used to check a system font parses before egui panics on it.
 skrifa = { version = "0.42.1", default-features = false, features = ["std"] }
+todai-core.workspace = true
 
 [dev-dependencies]
-tempfile = "3.27.0"
+tempfile.workspace = true
 
 [profile.release]
 lto = true

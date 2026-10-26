@@ -1,5 +1,4 @@
-//! User preferences in `$XDG_CONFIG_HOME/todai/config.json`, and the XDG
-//! directory lookups shared with the session and log files.
+//! User preferences in `$XDG_CONFIG_HOME/todai/config.json`.
 
 use std::path::PathBuf;
 
@@ -46,18 +45,7 @@ impl Config {
 }
 
 fn path() -> Option<PathBuf> {
-    Some(xdg_dir("XDG_CONFIG_HOME", ".config")?.join("config.json"))
+    Some(todai_core::dirs::config_dir()?.join("config.json"))
 }
 
-/// `$XDG_STATE_HOME/todai`, for session and log files.
-pub fn state_dir() -> Option<PathBuf> {
-    xdg_dir("XDG_STATE_HOME", ".local/state")
-}
-
-/// `$var/todai`, or `$HOME/fallback/todai`.
-fn xdg_dir(var: &str, fallback: &str) -> Option<PathBuf> {
-    let base = std::env::var_os(var)
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(fallback)))?;
-    Some(base.join("todai"))
-}
+pub use todai_core::dirs::state_dir;

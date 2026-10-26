@@ -2,10 +2,10 @@ mod agent;
 mod cli;
 mod config;
 mod gui;
-mod inbox;
 mod ipc;
 mod session;
-mod store;
+
+use todai_core::{inbox, store};
 
 use clap::Parser;
 
