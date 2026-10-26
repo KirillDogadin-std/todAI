@@ -187,3 +187,12 @@ fn register_and_forget() {
     assert_eq!(del(&board_id(&other)), 404);
     assert_eq!(f.get("/api/boards").1.as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn forget_from_the_cli_reaches_a_running_server() {
+    let f = Fixture::new();
+    // What `todai-server forget` does: a second Registry on the same dir.
+    assert!(Registry::load(&f.dir.path().join("server")).unwrap().remove(&f.id()).unwrap());
+    assert_eq!(f.get("/api/boards").1, json!([]));
+    assert_eq!(f.get(&format!("/api/boards/{}", f.id())).0, 404);
+}

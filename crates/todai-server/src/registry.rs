@@ -11,31 +11,38 @@ use std::sync::Mutex;
 use anyhow::{Context, Result, bail};
 use todai_core::api::{BoardInfo, board_id};
 
-/// Boards the server exposes, keyed by id, persisted in `boards.json`. Only
-/// files registered here can be reached through the API.
+/// Boards the server exposes, persisted in `boards.json`. Only files
+/// registered here can be reached through the API. Every call reads the file,
+/// so `todai-server forget` takes effect on a running server too.
 pub struct Registry {
     file: PathBuf,
-    boards: Mutex<BTreeMap<String, PathBuf>>,
+    /// Serializes this process's read-modify-write cycles.
+    write: Mutex<()>,
 }
 
 impl Registry {
     pub fn load(dir: &Path) -> Result<Registry> {
-        let file = dir.join("boards.json");
-        let paths: Vec<PathBuf> = match std::fs::read_to_string(&file) {
-            Ok(s) => serde_json::from_str(&s).with_context(|| format!("parse {}", file.display()))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(e) => return Err(e).with_context(|| format!("read {}", file.display())),
-        };
-        let boards = paths.into_iter().map(|p| (board_id(&p), p)).collect();
-        Ok(Registry { file, boards: Mutex::new(boards) })
+        let registry = Registry { file: dir.join("boards.json"), write: Mutex::new(()) };
+        registry.read()?; // fail early on a corrupt file
+        Ok(registry)
     }
 
+    fn read(&self) -> Result<BTreeMap<String, PathBuf>> {
+        let paths: Vec<PathBuf> = match std::fs::read_to_string(&self.file) {
+            Ok(s) => serde_json::from_str(&s).with_context(|| format!("parse {}", self.file.display()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(e).with_context(|| format!("read {}", self.file.display())),
+        };
+        Ok(paths.into_iter().map(|p| (board_id(&p), p)).collect())
+    }
+
+    /// Unreadable means empty: a request must never see a half-broken registry.
     pub fn list(&self) -> Vec<BoardInfo> {
-        self.boards.lock().unwrap().values().map(|p| BoardInfo::new(p.clone())).collect()
+        self.read().unwrap_or_default().into_values().map(BoardInfo::new).collect()
     }
 
     pub fn get(&self, id: &str) -> Option<PathBuf> {
-        self.boards.lock().unwrap().get(id).cloned()
+        self.read().ok()?.remove(id)
     }
 
     /// Registers an existing board file. Adding one twice is a no-op.
@@ -49,7 +56,8 @@ impl Registry {
         if !path.is_file() {
             bail!("no such board: {}", path.display());
         }
-        let mut boards = self.boards.lock().unwrap();
+        let _guard = self.write.lock().unwrap();
+        let mut boards = self.read()?;
         if boards.insert(board_id(path), path.to_owned()).is_none() {
             self.save(&boards)?;
         }
@@ -58,7 +66,8 @@ impl Registry {
 
     /// Unregisters a board; whether it was registered.
     pub fn remove(&self, id: &str) -> Result<bool> {
-        let mut boards = self.boards.lock().unwrap();
+        let _guard = self.write.lock().unwrap();
+        let mut boards = self.read()?;
         let removed = boards.remove(id).is_some();
         if removed {
             self.save(&boards)?;
