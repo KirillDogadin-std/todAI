@@ -1,28 +1,49 @@
 # Architecture
 
-One binary, `todai`. Everything goes through the board file, so the CLI, the
-window and the agent adapters never talk to each other directly. The one
-exception is the window's socket, which only opens tabs.
+A Cargo workspace with two binaries: `todai` (CLI + desktop window) and
+`todai-server` (headless HTTP server, [server.md](server.md)). Everything
+goes through the board file, so the CLI, the window, the server and the
+agent adapters never talk to each other directly. The exceptions are the
+window's socket, which only opens tabs, and the server's HTTP API, which
+remote frontends use instead of the file.
 
 ```
  agent shell ──todai add-decision──┐                ┌── todai window (egui)
- agent hooks ──todai hook …────────┼──▶ board.jsonl ◀┤   watches the file,
+ agent hooks ──todai hook …────────┼──▶ board.jsonl ◀┤   local tab: watches the file,
  pi extension ─todai wait──────────┘   (flock, append)│   appends operator events
-                                                      │
+                                         ▲            │
  todai FILE ──────────── $XDG_RUNTIME_DIR/todai.sock ─┘   (open tab / focus / list)
+                                         │
+                          todai-server ──┘  reads, long-polls, appends operator events
+                                ▲
+                                └── HTTP + token ── remote tab in a window elsewhere, web app
 ```
+
+## Crates
+
+| Crate | Depends on | |
+|---|---|---|
+| `crates/todai-core` | serde | the event log, inbox text, API wire types, XDG paths; no GUI, no network |
+| `crates/todai-server` | core, tiny_http | the HTTP server, as a library and the `todai-server` binary; no GUI |
+| `todai` (repo root) | core, server, egui, ureq | the CLI, the window, agent integration; `todai serve` embeds the server |
+
+Keep the arrows pointing this way: core and server must build without egui
+(CI checks), so a headless install never pulls in GL.
 
 ## Modules
 
 | Path | |
 |---|---|
-| `src/store/` | the event log: types (`event.rs`), folding into a board (`state.rs`), locked append and read (`mod.rs`) |
-| `src/cli.rs` | every subcommand; also starting the window (`open`, `spawn_window`, `gui_main`) |
-| `src/inbox.rs` | turns unprocessed operator events into the text agents receive |
-| `src/gui/` | the window: `mod.rs` (app, tabs, panels, dialogs, cheatsheet), `board.rs` (rendering), `nav.rs` (keyboard state machine), `textnav.rs` (vim motions), `tab.rs` (one open board + file watcher) |
+| `crates/todai-core/src/store/` | the event log: types (`event.rs`), folding into a board (`state.rs`), locked append and read (`mod.rs`) |
+| `crates/todai-core/src/inbox.rs` | turns unprocessed operator events into the text agents receive |
+| `crates/todai-core/src/api.rs` | the HTTP API's wire types and board ids |
+| `crates/todai-server/src/` | `lib.rs` (args, bind, run), `http.rs` (routes, auth, long-poll), `registry.rs` (token, registered boards, address file) |
+| `src/cli.rs` | every subcommand; also starting the window (`open`, `spawn_window`, `gui_main`) and opening remote boards (`open_remote`) |
+| `src/remote.rs` | HTTP client for the server; saved tokens; registering boards with a local server |
+| `src/gui/` | the window: `mod.rs` (app, tabs, panels, dialogs, cheatsheet), `board.rs` (rendering), `nav.rs` (keyboard state machine), `textnav.rs` (vim motions), `tab.rs` (one open board and its source: file watcher or server long-poll) |
 | `src/ipc.rs` | single-instance socket: bind / take over a stale socket, request and reply |
-| `src/session.rs` | open tabs, restored at startup |
-| `src/config.rs` | theme and input mode; XDG directory helpers |
+| `src/session.rs` | open tabs (files and remote boards), restored at startup |
+| `src/config.rs` | theme and input mode |
 | `src/agent/` | what agents see: `guide.md` (the protocol), the skill, `claude.rs` (hooks), `pi-extension.ts`, `setup.rs` (install / remove) |
 
 ## Board state
@@ -38,9 +59,11 @@ current state, which is how ids and `seq` stay unique across processes.
   answers, it starts `todai __gui FILE` in a new session (`setsid`, so it
   outlives the terminal or agent shell) and waits until the socket answers. A
   window that loses a startup race to another forwards its files and exits.
-- **Live updates.** Each tab watches its board's directory (inotify via
+- **Live updates.** A local tab watches its board's directory (inotify via
   `notify`) and reloads on change. The window's own writes trigger the same
-  reload.
+  reload. A remote tab long-polls the server on a thread and folds the
+  events it gets, so everything downstream (rendering, notifications) is the
+  same; its actions go out in order on a second thread.
 - **Notifications.** When a reload brings new agent posts (decisions, todos,
   elaboration answers) and the window is unfocused, one `notify-send` per tab
   lists them. Existing items never notify when a board is opened.
@@ -64,7 +87,8 @@ current state, which is how ids and `seq` stay unique across processes.
 ## Testing
 
 - `cargo test` covers the store (folding, validation, torn lines, 4 threads
-  appending concurrently), vim motions, IPC, setup's settings merge, and the
+  appending concurrently), vim motions, IPC, setup's settings merge, the
+  server's API over real HTTP, a remote tab against a live server, and the
   window itself.
 - Window tests (`src/gui/tests.rs`) run the real board code headlessly with
   `egui::Context::run_ui`, feeding synthetic key and pointer events and

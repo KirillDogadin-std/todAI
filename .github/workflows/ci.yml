@@ -21,3 +21,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked
       - run: cargo test --locked
+      # The headless server must build on its own and never pull in the GUI.
+      - run: cargo build --locked -p todai-server
+      - name: todai-server has no GUI dependencies
+        run: |
+          cargo tree --locked -p todai-server -e normal > server-deps.txt
+          ! grep -E 'egui|eframe|winit|glow' server-deps.txt

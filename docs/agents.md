@@ -54,6 +54,11 @@ Adapters look for the line `todai: attached <path>` in the agent's shell tool
 output. That is the only coupling: the agent never has to tell the adapter
 anything, and sessions that never attach are never touched.
 
+If a [todai server](server.md) is running on the machine, `todai attach` also
+registers the board with it (best effort, a one-second timeout, never an
+error), so the operator can answer from another device. Agents still write
+the file; nothing else changes for them.
+
 ## Claude Code
 
 Installed by `todai setup --agent claude`:

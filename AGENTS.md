@@ -1,7 +1,11 @@
 # todai: notes for agents working on this repo
 
 Native board (Rust + egui) where coding agents post decisions and manual todos
-for the operator. Start with `README.md`, then `docs/architecture.md`.
+for the operator, plus an optional headless HTTP server for answering from
+other machines. Start with `README.md`, then `docs/architecture.md`.
+
+Workspace: `crates/todai-core` (log, inbox, API types), `crates/todai-server`
+(`todai-server`), and the root crate (`todai`: CLI + window).
 
 This file is the agent-agnostic `AGENTS.md`. For Claude Code, make a local,
 gitignored symlink: `ln -s AGENTS.md CLAUDE.md`.
@@ -9,8 +13,9 @@ gitignored symlink: `ln -s AGENTS.md CLAUDE.md`.
 ## Build and test
 
 ```sh
-cargo build                 # toolchain pinned to stable via rust-toolchain.toml
-cargo test                  # store, vim motions, IPC, setup merge, headless GUI tests
+cargo build                 # all crates; toolchain pinned to stable via rust-toolchain.toml
+cargo test                  # store, vim motions, IPC, setup merge, server API, headless GUI tests
+cargo build -p todai-server # the headless server alone (must never depend on egui)
 cargo build --release       # use this binary for memory or startup measurements (see below)
 examples/demo.sh            # populated demo board in a real window (--no-open: just build it)
 ```
@@ -45,7 +50,14 @@ test-only code must be warning-free too: check with
 - **Hooks must never fail the agent.** `todai hook ...` reports errors on stderr
   and exits 0.
 - **All writes go through `Log::append`** (flock + validate + append). Never
-  rewrite a board file.
+  rewrite a board file. The server is no exception.
+- **`todai-core` and `todai-server` stay GUI-free.** CI fails if
+  `cargo tree -p todai-server` shows egui/eframe.
+- **The server takes operator actions only.** Agents write board files
+  directly; don't route them through HTTP without an explicit decision.
+- **The HTTP API is documented in `docs/server.md`** and its wire types are in
+  `crates/todai-core/src/api.rs`. Change them together; `board_id` must stay
+  stable (saved sessions store it).
 - **Keys are documented in three places**: `CHEATSHEET` in `src/gui/mod.rs`,
   `docs/keyboard.md`, and the behavior in `src/gui/nav.rs`. Change them
   together.

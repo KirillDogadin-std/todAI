@@ -15,6 +15,8 @@ interrupted.
   or anything with a shell. Nothing is installed or active until you ask.
 - **Plain data:** each board is an append-only JSONL file you can read, grep,
   or commit.
+- **Answer from elsewhere:** an optional headless server shares boards over
+  HTTP with the window on another machine ([docs/server.md](docs/server.md)).
 
 ## Install
 
@@ -93,6 +95,8 @@ Screenshots show `examples/demo.sh`.
 |---|---|
 | `todai open [FILE...]` | open boards in the window (`--foreground` to run attached) |
 | `todai tabs` | list open tabs |
+| `todai open --server URL [--token T] [BOARD...]` | open boards from a todai server |
+| `todai serve` / `todai-server` | serve boards over HTTP ([docs/server.md](docs/server.md)) |
 | `todai setup` | install agent integrations (`--agent`, `--scope`, `--dry-run`, `--remove`) |
 | `todai attach [NAME]` | *agent*: start using `.agents/todai/NAME.jsonl` and print its path |
 | `todai guide` | *agent*: print the protocol |
@@ -111,7 +115,8 @@ Screenshots show `examples/demo.sh`.
 | `.agents/todai/NAME.jsonl` | a board (one per workflow); gitignore it or commit it as a decision record |
 | `.agents/skills/todai/` | the skill, if installed for the project (linked from `.claude/skills/todai` for Claude Code) |
 | `~/.config/todai/config.json` | theme and input mode |
-| `~/.local/state/todai/` | open tabs, setup records, hook state, window log |
+| `~/.local/state/todai/` | open tabs, setup records, hook state, window log, saved server tokens |
+| `~/.local/state/todai/server/` | the server's token, registered boards and address |
 | `$XDG_RUNTIME_DIR/todai.sock` | the running window's socket |
 
 ## Docs
@@ -119,6 +124,7 @@ Screenshots show `examples/demo.sh`.
 - [docs/agents.md](docs/agents.md): how agent integration works, per agent
 - [docs/keyboard.md](docs/keyboard.md): every key and mouse action
 - [docs/board-format.md](docs/board-format.md): the event log
+- [docs/server.md](docs/server.md): the headless server and its HTTP API
 - [docs/architecture.md](docs/architecture.md): how the code fits together
 
 ## License
