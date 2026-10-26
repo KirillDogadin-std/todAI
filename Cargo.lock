@@ -2782,6 +2782,8 @@ dependencies = [
  "skrifa",
  "tempfile",
  "todai-core",
+ "todai-server",
+ "ureq",
 ]
 
 [[package]]

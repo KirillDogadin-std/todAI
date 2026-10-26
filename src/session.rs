@@ -1,15 +1,14 @@
 //! Open tabs, restored when the window starts again.
 
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
 
 use crate::config::state_dir;
+use crate::gui::Location;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(default)]
 pub struct Session {
-    pub tabs: Vec<PathBuf>,
+    pub tabs: Vec<Location>,
     pub active: usize,
 }
 

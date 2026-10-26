@@ -23,12 +23,22 @@ pub struct Cli {
 enum Cmd {
     /// Open FILEs in the board window: new tabs if it is running, otherwise
     /// start it in the background. No FILE just raises (or starts) the window.
+    /// With --server, FILEs are board names or ids on that server (all if none).
     Open {
         files: Vec<PathBuf>,
         /// Run the window in this process instead of detaching.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "server")]
         foreground: bool,
+        /// Open boards from a todai server, e.g. http://host:7341.
+        #[arg(long)]
+        server: Option<String>,
+        /// The server's token (`todai-server token` on it); saved for next
+        /// time. Defaults to the saved one, or $TODAI_TOKEN.
+        #[arg(long, requires = "server")]
+        token: Option<String>,
     },
+    /// Serve boards over HTTP to remote frontends; same as `todai-server`.
+    Serve(todai_server::Args),
     /// List the tabs open in the running window.
     Tabs,
 
@@ -151,21 +161,30 @@ enum Cmd {
 }
 
 pub fn run(cli: Cli) -> Result<()> {
-    let cmd = cli.cmd.unwrap_or(Cmd::Open { files: cli.files, foreground: false });
+    let cmd = cli.cmd.unwrap_or(Cmd::Open { files: cli.files, foreground: false, server: None, token: None });
     match cmd {
-        Cmd::Open { files, foreground } => {
+        Cmd::Open { files, server: Some(server), token, .. } => {
+            let token = token.or_else(|| std::env::var("TODAI_TOKEN").ok().filter(|t| !t.is_empty()));
+            open_remote(&server, token.as_deref(), &files)?
+        }
+        Cmd::Open { files, foreground, .. } => {
             let files = files.iter().map(std::path::absolute).collect::<std::io::Result<Vec<_>>>()?;
+            for f in &files {
+                crate::remote::register_local(f);
+            }
             if foreground {
                 gui_main(files)?;
             } else {
                 open(files)?;
             }
         }
+        Cmd::Serve(args) => todai_server::run(args)?,
         Cmd::Gui { files } => gui_main(files)?,
         Cmd::Attach { name, no_window } => {
             let path = agent::board_path(name.as_deref().unwrap_or("board"))?;
             std::fs::create_dir_all(path.parent().unwrap())?;
             std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+            crate::remote::register_local(&path);
             if !no_window && let Err(e) = open(vec![path.clone()]) {
                 eprintln!("todai: could not open the window ({e:#}); the board still works");
             }
@@ -189,7 +208,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Cmd::Tabs => match ipc::send(&ipc::socket_path(), &Request::List)? {
             Some(r) => {
                 for (i, t) in r.tabs.iter().enumerate() {
-                    println!("{} {}", if i == r.active { "*" } else { " " }, t.display());
+                    println!("{} {}", if i == r.active { "*" } else { " " }, t);
                 }
             }
             None => println!("todai: window not running"),
@@ -300,6 +319,43 @@ fn open(files: Vec<PathBuf>) -> Result<()> {
         return Ok(());
     }
     spawn_window(&socket, &files)
+}
+
+/// Opens boards from a todai server in the window. `wanted` are board names
+/// or ids; none means every board the server has.
+fn open_remote(server: &str, token: Option<&str>, wanted: &[PathBuf]) -> Result<()> {
+    let server = server.trim_end_matches('/');
+    let client = match token {
+        Some(t) => crate::remote::Client::new(server, t),
+        None => crate::remote::client_for(server)
+            .ok_or_else(|| anyhow::anyhow!("no token for {server}: pass --token (run `todai-server token` there)"))?,
+    };
+    let boards = client.boards()?;
+    let mut picked = Vec::new();
+    for w in wanted {
+        let w = w.to_string_lossy();
+        match boards.iter().filter(|b| b.id == w || b.name == w).collect::<Vec<_>>()[..] {
+            [b] => picked.push(b.clone()),
+            [] => bail!("{server} has no board {w} (see `todai-server boards` there)"),
+            _ => bail!("{server} has several boards named {w}; use the id"),
+        }
+    }
+    if wanted.is_empty() {
+        picked = boards;
+    }
+    if picked.is_empty() {
+        bail!("{server} serves no boards yet");
+    }
+    if let Some(t) = token {
+        crate::remote::save_token(server, t)?;
+    }
+    open(Vec::new())?;
+    let socket = ipc::socket_path();
+    for b in picked {
+        let req = Request::OpenRemote { server: client.base().to_owned(), board: b.id, name: b.name };
+        ipc::send(&socket, &req)?;
+    }
+    Ok(())
 }
 
 /// Starts `todai __gui` in its own session so it outlives the caller (a

@@ -16,6 +16,9 @@ use serde::{Deserialize, Serialize};
 pub enum Request {
     /// Open the file in a tab, or switch to it if already open.
     Open { path: PathBuf },
+    /// Open a board from a todai server; its token must already be saved
+    /// (`remote::save_token`), so it never travels over this socket.
+    OpenRemote { server: String, board: String, name: String },
     /// Raise the window.
     Focus,
     /// Report open tabs.
@@ -27,8 +30,9 @@ pub struct Reply {
     pub ok: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// What each tab shows: a board path, or a server URL and board.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tabs: Vec<PathBuf>,
+    pub tabs: Vec<String>,
     #[serde(default)]
     pub active: usize,
 }
@@ -154,7 +158,7 @@ mod tests {
         });
         let open = Request::Open { path: "/x/b.jsonl".into() };
         assert_eq!(send(&sock, &open).unwrap(), Some(Reply::ok()));
-        assert_eq!(send(&sock, &Request::List).unwrap().unwrap().tabs, vec![PathBuf::from("/a")]);
+        assert_eq!(send(&sock, &Request::List).unwrap().unwrap().tabs, vec!["/a".to_owned()]);
     }
 
     #[test]

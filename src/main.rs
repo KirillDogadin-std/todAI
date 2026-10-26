@@ -3,6 +3,7 @@ mod cli;
 mod config;
 mod gui;
 mod ipc;
+mod remote;
 mod session;
 
 use todai_core::{inbox, store};

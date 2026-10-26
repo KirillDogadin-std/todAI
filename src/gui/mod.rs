@@ -4,7 +4,7 @@ mod tab;
 mod textnav;
 
 use std::os::unix::net::UnixListener;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc;
 
 use anyhow::{Result, anyhow};
@@ -18,6 +18,7 @@ use crate::store::{DecisionStatus, Kind};
 use board::Board;
 use nav::{FocusRequest, Mode};
 use tab::Tab;
+pub use tab::Location;
 
 /// Width, in body-text characters, at which elaborations move into their own column.
 const SPLIT_CHARS: f32 = 120.0;
@@ -162,31 +163,50 @@ impl App {
             saved: saved.clone(),
         };
         // Restore last session, skipping boards that were deleted since.
-        for p in saved.tabs.iter().filter(|p| p.exists()) {
-            app.open_or_focus(&cc.egui_ctx, p);
+        for loc in &saved.tabs {
+            if !matches!(loc, Location::File(p) if !p.exists()) {
+                app.open_or_focus(&cc.egui_ctx, loc.clone());
+            }
         }
         app.active = saved.active.min(app.tabs.len().saturating_sub(1));
-        for p in &paths {
-            app.open_or_focus(&cc.egui_ctx, p);
+        for p in paths {
+            app.open_or_focus(&cc.egui_ctx, Location::File(p));
         }
         app
     }
 
-    fn open_or_focus(&mut self, ctx: &egui::Context, path: &Path) {
-        match self.tabs.iter().position(|t| t.log.path() == path) {
-            Some(i) => self.active = i,
-            None => {
-                self.tabs.push(Tab::open(path.to_owned(), ctx));
-                self.active = self.tabs.len() - 1;
-            }
+    fn open_or_focus(&mut self, ctx: &egui::Context, loc: Location) {
+        if let Some(i) = self.tabs.iter().position(|t| t.location.same(&loc)) {
+            self.active = i;
+            return;
         }
+        let tab = match &loc {
+            Location::File(p) => Tab::open(p.clone(), ctx),
+            Location::Remote { server, .. } => match crate::remote::client_for(server) {
+                Some(client) => Tab::remote(loc.clone(), client, ctx),
+                None => {
+                    // Without a token the tab can't load; keep it so the
+                    // session remembers it, and say why it is empty.
+                    let mut tab = Tab::open_failed(loc.clone());
+                    tab.error = Some(format!("no token saved for {server}; run: todai open --server {server} --token ..."));
+                    tab
+                }
+            },
+        };
+        self.tabs.push(tab);
+        self.active = self.tabs.len() - 1;
     }
 
     fn serve_requests(&mut self, ctx: &egui::Context) {
         while let Ok((req, reply)) = self.requests.try_recv() {
             let r = match req {
                 Request::Open { path } => {
-                    self.open_or_focus(ctx, &path);
+                    self.open_or_focus(ctx, Location::File(path));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    Reply::ok()
+                }
+                Request::OpenRemote { server, board, name } => {
+                    self.open_or_focus(ctx, Location::Remote { server, board, name });
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                     Reply::ok()
                 }
@@ -196,7 +216,7 @@ impl App {
                 }
                 Request::List => Reply {
                     ok: true,
-                    tabs: self.tabs.iter().map(|t| t.log.path().to_owned()).collect(),
+                    tabs: self.tabs.iter().map(|t| t.location.label()).collect(),
                     active: self.active,
                     error: None,
                 },
@@ -232,7 +252,7 @@ impl App {
     }
 
     fn save_session(&mut self) {
-        let now = Session { tabs: self.tabs.iter().map(|t| t.log.path().to_owned()).collect(), active: self.active };
+        let now = Session { tabs: self.tabs.iter().map(|t| t.location.clone()).collect(), active: self.active };
         if now != self.saved {
             if let Err(e) = now.save()
                 && let Some(t) = self.tabs.get_mut(self.active)
@@ -370,7 +390,7 @@ impl App {
                         n => format!("{}  {n}", t.title()),
                     };
                     let r = ui.selectable_label(i == self.active, label);
-                    if r.on_hover_text(t.log.path().display().to_string()).clicked() {
+                    if r.on_hover_text(t.location.label()).clicked() {
                         self.active = i;
                     }
                     let x = ui.add(egui::Button::new(RichText::new("×").weak()).small().frame(false));
@@ -598,9 +618,12 @@ fn status_bar(ui: &mut egui::Ui, tab: &Tab, vim: bool) {
                 let more = if sel.chars().count() > 40 { "…" } else { "" };
                 ui.label(format!("“{short}{more}”  Enter or right-click: elaborate · Esc: clear"));
             }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.weak("? keys · Ctrl+Shift+M vim/mouse");
-            });
+            // An error can be long (a remote tab's server is down); it wins the space.
+            if tab.error.is_none() {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.weak("? keys · Ctrl+Shift+M vim/mouse");
+                });
+            }
         });
     });
 }

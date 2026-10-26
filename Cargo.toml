@@ -38,6 +38,8 @@ serde_json.workspace = true
 # Already in the tree via epaint; used to check a system font parses before egui panics on it.
 skrifa = { version = "0.42.1", default-features = false, features = ["std"] }
 todai-core.workspace = true
+todai-server.workspace = true
+ureq = { version = "3.5.0", default-features = false, features = ["json"] }
 
 [dev-dependencies]
 tempfile.workspace = true
