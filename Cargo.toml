@@ -1,7 +1,7 @@
 [workspace]
-members = ["crates/todai-core"]
+members = ["crates/todai-core", "crates/todai-server"]
 # `cargo build` / `cargo test` at the root cover every crate.
-default-members = [".", "crates/todai-core"]
+default-members = [".", "crates/todai-core", "crates/todai-server"]
 
 [workspace.package]
 version = "0.3.0"
