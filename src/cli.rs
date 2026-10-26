@@ -352,8 +352,11 @@ fn open_remote(server: &str, token: Option<&str>, wanted: &[PathBuf]) -> Result<
     open(Vec::new())?;
     let socket = ipc::socket_path();
     for b in picked {
-        let req = Request::OpenRemote { server: client.base().to_owned(), board: b.id, name: b.name };
-        ipc::send(&socket, &req)?;
+        let req = Request::OpenRemote { server: client.base().to_owned(), board: b.id, name: b.name.clone() };
+        if let Some(ipc::Reply { error: Some(e), .. }) = ipc::send(&socket, &req)? {
+            // A window from an older todai doesn't know remote boards.
+            bail!("the window refused {}: {e}; restart it with `pkill -f 'todai __gui'`", b.name);
+        }
     }
     Ok(())
 }
