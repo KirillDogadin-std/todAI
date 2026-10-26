@@ -75,21 +75,48 @@ In `$XDG_STATE_HOME/todai/server/` (default `~/.local/state/todai/server/`):
 
 ## API
 
-All bodies are JSON. Every route except `/api/health` needs
-`Authorization: Bearer TOKEN`; a missing or wrong token gets `401`. Errors
-come back as `{"error": "..."}`. Wire types live in
-`crates/todai-core/src/api.rs`; events are the
-[board format](board-format.md) lines.
+All bodies are JSON. Routes are versioned under `/api/v1`; only
+`/api/health` is not, so a client can check compatibility first. Every
+versioned route needs `Authorization: Bearer TOKEN`; a missing or wrong token
+gets `401`. Errors come back as `{"error": "..."}`.
+
+The contract is the types in `crates/todai-core/src/api.rs`, not the
+internal board state: `BoardView` and friends are built from it in one place
+and tested for their JSON shape, so refactors inside todai don't reach
+clients. Any change to those types bumps `API_VERSION` (and the route
+prefix). Events are the [board format](board-format.md) lines, which are
+stable on their own.
 
 | Route | |
 |---|---|
-| `GET /api/health` | `{"version"}`; no token needed |
-| `GET /api/boards` | `[{"id", "name", "path"}]` |
-| `POST /api/boards` `{"path"}` | register an existing `.jsonl` board by absolute path; loopback only (`403` otherwise); `201` with the board |
-| `DELETE /api/boards/{id}` | unregister; `204`, or `404` |
-| `GET /api/boards/{id}` | `{"board", "state"}`: the folded board, as `todai show --json` prints it |
-| `GET /api/boards/{id}/events?after=SEQ&wait=SECS` | `{"events", "last_seq", "reset"?}`: events with `seq > after` |
-| `POST /api/boards/{id}/actions` | append one operator event (body: an event without `seq`, `ts`, `by`); returns the written event |
+| `GET /api/health` | `{"version", "api"}`: todai's release and the API version (`1`); no token needed |
+| `GET /api/v1/boards` | `[{"id", "name", "path"}]` |
+| `POST /api/v1/boards` `{"path"}` | register an existing `.jsonl` board by absolute path; loopback only (`403` otherwise); `201` with the board |
+| `DELETE /api/v1/boards/{id}` | unregister; `204`, or `404` |
+| `GET /api/v1/boards/{id}` | the board as the operator sees it (`BoardView`, below) |
+| `GET /api/v1/boards/{id}/events?after=SEQ&wait=SECS` | `{"events", "last_seq", "reset"?}`: events with `seq > after` |
+| `POST /api/v1/boards/{id}/actions` | append one operator event (body: an event without `seq`, `ts`, `by`); returns the written event |
+
+Any other path under `/api/` (including the unversioned `/api/boards`) gets
+`404` with the version this server speaks.
+
+### Board view
+
+```json
+{
+  "board": {"id": "51c50ece8bf66d5b", "name": "board", "path": "/…/.agents/todai/board.jsonl"},
+  "last_seq": 9,
+  "decisions": [{"id": "d1", "title": "A?", "context": null, "options": ["x"], "status": "resolved", "resolution": "x"}],
+  "todos": [{"id": "t1", "title": "Do", "context": null, "done": true, "note": "ok"}],
+  "elaborations": [{"rid": "r1", "target": "d1", "selection": "A", "note": null, "parent": null, "answer": "**A** is…"}]
+}
+```
+
+`status` is `pending`, `resolved` or `withdrawn`; `resolution` is set only
+when resolved. Trashed items are left out. Elaborations with the same root
+(follow `parent`) form a thread; `answer` is markdown, `null` until the agent
+answers. To follow changes from here, long-poll `events` with
+`after=last_seq`.
 
 Board ids are 16 hex digits of a hash of the board's path. They are the only
 way to name a board, so a client can never reach a file that wasn't
@@ -97,7 +124,8 @@ registered.
 
 ### Following a board
 
-Ask for `events?after=0` once and fold the result, then loop on
+Ask for `events?after=0` once and fold the result (or start from the board
+view's `last_seq`), then loop on
 `events?after=LAST_SEQ&wait=25`. The server answers as soon as the board
 changes, or with an empty list when the wait (at most 60 s) runs out. If
 `reset` is `true`, the file was replaced: drop what you have and fold the
@@ -108,7 +136,7 @@ returned events from scratch. The desktop window does exactly this
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" -d '{"type":"decision.resolve","id":"d1","text":"yes"}' \
-  http://127.0.0.1:7341/api/boards/$ID/actions
+  http://127.0.0.1:7341/api/v1/boards/$ID/actions
 ```
 
 Only operator event types are accepted (`decision.resolve`,

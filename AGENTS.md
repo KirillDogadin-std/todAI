@@ -57,7 +57,8 @@ test-only code must be warning-free too: check with
   directly; don't route them through HTTP without an explicit decision.
 - **The HTTP API is documented in `docs/server.md`** and its wire types are in
   `crates/todai-core/src/api.rs`. Change them together; `board_id` must stay
-  stable (saved sessions store it).
+  stable (saved sessions store it). Responses use the `*View` types there,
+  never `store` types; changing their JSON shape means bumping `API_VERSION`.
 - **Keys are documented in three places**: `CHEATSHEET` in `src/gui/mod.rs`,
   `docs/keyboard.md`, and the behavior in `src/gui/nav.rs`. Change them
   together.

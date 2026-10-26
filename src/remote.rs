@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use serde::de::DeserializeOwned;
-use todai_core::api::{ApiError, BoardInfo, Events, Health, Register};
+use todai_core::api::{API_VERSION, ApiError, BoardInfo, Events, Health, Register, prefix};
 use todai_core::store::{Event, Kind};
 
 #[derive(Clone)]
@@ -39,13 +39,22 @@ impl Client {
         self.call(self.agent.get(self.url("/api/health")).call())
     }
 
+    /// Fails unless this is a todai server speaking our API version.
+    pub fn check(&self) -> Result<()> {
+        let h = self.health()?;
+        if h.api != API_VERSION {
+            bail!("{} speaks API v{} (todai {}); this todai speaks v{API_VERSION}", self.base, h.api, h.version);
+        }
+        Ok(())
+    }
+
     pub fn boards(&self) -> Result<Vec<BoardInfo>> {
-        self.call(self.agent.get(self.url("/api/boards")).header("Authorization", self.auth()).call())
+        self.call(self.agent.get(self.url("/boards")).header("Authorization", self.auth()).call())
     }
 
     /// Events after `after`, waiting up to `wait` for some to arrive.
     pub fn events(&self, id: &str, after: u64, wait: Duration) -> Result<Events> {
-        let url = self.url(&format!("/api/boards/{id}/events?after={after}&wait={}", wait.as_secs()));
+        let url = self.url(&format!("/boards/{id}/events?after={after}&wait={}", wait.as_secs()));
         let req = self.agent.get(url).header("Authorization", self.auth());
         let req = req.config().timeout_global(Some(wait + Duration::from_secs(10))).build();
         self.call(req.call())
@@ -53,18 +62,19 @@ impl Client {
 
     /// Posts one operator action; the server assigns `seq` (and elaboration ids).
     pub fn act(&self, id: &str, kind: &Kind) -> Result<Event> {
-        let req = self.agent.post(self.url(&format!("/api/boards/{id}/actions"))).header("Authorization", self.auth());
+        let req = self.agent.post(self.url(&format!("/boards/{id}/actions"))).header("Authorization", self.auth());
         self.call(req.send_json(kind))
     }
 
     /// Only accepted from the server's own machine.
     pub fn register(&self, path: &Path) -> Result<BoardInfo> {
-        let req = self.agent.post(self.url("/api/boards")).header("Authorization", self.auth());
+        let req = self.agent.post(self.url("/boards")).header("Authorization", self.auth());
         self.call(req.send_json(Register { path: path.to_owned() }))
     }
 
+    /// `path` is under the versioned prefix, except `/api/health`.
     fn url(&self, path: &str) -> String {
-        format!("{}{path}", self.base)
+        if path.starts_with("/api/") { format!("{}{path}", self.base) } else { format!("{}{}{path}", self.base, prefix()) }
     }
 
     fn auth(&self) -> String {
@@ -144,7 +154,7 @@ pub fn register_local(path: &Path) {
     };
     // The address file outlives a killed server, and something else may
     // own that port now: only send the token to a todai server.
-    if client.health().is_ok() {
+    if client.check().is_ok() {
         let _ = client.register(path);
     }
 }

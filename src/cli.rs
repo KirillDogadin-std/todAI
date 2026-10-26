@@ -330,6 +330,7 @@ fn open_remote(server: &str, token: Option<&str>, wanted: &[PathBuf]) -> Result<
         None => crate::remote::client_for(server)
             .ok_or_else(|| anyhow::anyhow!("no token for {server}: pass --token (run `todai-server token` there)"))?,
     };
+    client.check()?;
     let boards = client.boards()?;
     let mut picked = Vec::new();
     for w in wanted {

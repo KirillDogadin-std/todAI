@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tiny_http::{Header, Method, Request, Response};
-use todai_core::api::{ApiError, BoardInfo, Events, Health, MAX_WAIT_SECS, Register};
+use todai_core::api::{API_VERSION, ApiError, BoardInfo, BoardView, Events, Health, MAX_WAIT_SECS, Register};
 use todai_core::store::{Actor, Event, Kind, Log};
 
 use crate::Registry;
@@ -78,27 +78,33 @@ fn handle(shared: &Shared, req: &mut Request) -> Reply {
     let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
     let method = req.method().clone();
 
+    // Unversioned and open, so clients can check compatibility first.
     if method == Method::Get && segs == ["api", "health"] {
-        return json(200, &Health { version: env!("CARGO_PKG_VERSION").into() });
+        return json(200, &Health { version: env!("CARGO_PKG_VERSION").into(), api: API_VERSION });
     }
+    let version = format!("v{API_VERSION}");
+    let route = match segs.as_slice() {
+        ["api", v, rest @ ..] if *v == version => rest,
+        ["api", ..] => return error(404, format!("no route {method} {path}; this server speaks /api/{version}")),
+        _ => return error(404, "not found; the API is under /api"),
+    };
     if !authorized(req, &shared.token) {
         return error(401, "missing or wrong token (Authorization: Bearer ...)");
     }
     let board = |id: &str| shared.registry.get(id).ok_or_else(|| error(404, format!("no board {id}")));
 
-    let result = match (&method, segs.as_slice()) {
-        (Method::Get, ["api", "boards"]) => Ok(json(200, &shared.registry.list())),
-        (Method::Post, ["api", "boards"]) => register(shared, req),
-        (Method::Get, ["api", "boards", id]) => board(id).map(|p| state(&p)),
-        (Method::Delete, ["api", "boards", id]) => Ok(match shared.registry.remove(id) {
+    let result = match (&method, route) {
+        (Method::Get, ["boards"]) => Ok(json(200, &shared.registry.list())),
+        (Method::Post, ["boards"]) => register(shared, req),
+        (Method::Get, ["boards", id]) => board(id).map(|p| state(&p)),
+        (Method::Delete, ["boards", id]) => Ok(match shared.registry.remove(id) {
             Ok(true) => Reply { status: 204, body: None },
             Ok(false) => error(404, format!("no board {id}")),
             Err(e) => error(500, format!("{e:#}")),
         }),
-        (Method::Get, ["api", "boards", id, "events"]) => board(id).map(|p| events(&p, query)),
-        (Method::Post, ["api", "boards", id, "actions"]) => board(id).map(|p| action(&p, req)),
-        (_, ["api", ..]) => Err(error(404, format!("no route {method} {path}"))),
-        _ => Err(error(404, "not found; the API is under /api")),
+        (Method::Get, ["boards", id, "events"]) => board(id).map(|p| events(&p, query)),
+        (Method::Post, ["boards", id, "actions"]) => board(id).map(|p| action(&p, req)),
+        _ => Err(error(404, format!("no route {method} {path}"))),
     };
     result.unwrap_or_else(|e| e)
 }
@@ -142,7 +148,7 @@ fn register(shared: &Shared, req: &mut Request) -> Result<Reply, Reply> {
 /// The folded board, for clients that don't fold events themselves.
 fn state(path: &Path) -> Reply {
     match Log::new(path).load_state() {
-        Ok((_, state)) => json(200, &serde_json::json!({ "board": BoardInfo::new(path.to_owned()), "state": state })),
+        Ok((_, state)) => json(200, &BoardView::new(BoardInfo::new(path.to_owned()), &state)),
         Err(e) => error(500, format!("{e:#}")),
     }
 }
