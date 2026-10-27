@@ -202,6 +202,24 @@ fn register_and_forget() {
 }
 
 #[test]
+fn prune_forgets_only_boards_whose_file_is_gone() {
+    let f = Fixture::new();
+    let gone = f.dir.path().join("gone.jsonl");
+    std::fs::write(&gone, "").unwrap();
+    assert_eq!(f.post("/api/v1/boards", json!({"path": gone})).0, 201);
+    std::fs::remove_file(&gone).unwrap();
+
+    // What `todai-server prune` does: a second Registry on the same dir.
+    let registry = Registry::load(&f.dir.path().join("server")).unwrap();
+    assert_eq!(registry.prune().unwrap(), vec![BoardInfo::new(gone)]);
+    let (_, boards) = f.get("/api/v1/boards");
+    let boards: Vec<BoardInfo> = serde_json::from_value(boards).unwrap();
+    assert_eq!(boards, vec![BoardInfo::new(f.log.path().into())], "the board whose file exists stays");
+
+    assert_eq!(registry.prune().unwrap(), vec![], "nothing left to prune");
+}
+
+#[test]
 fn forget_from_the_cli_reaches_a_running_server() {
     let f = Fixture::new();
     // What `todai-server forget` does: a second Registry on the same dir.

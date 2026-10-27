@@ -75,6 +75,20 @@ impl Registry {
         Ok(removed)
     }
 
+    /// Unregisters boards whose file was deleted; the ones it removed.
+    pub fn prune(&self) -> Result<Vec<BoardInfo>> {
+        let mut pruned = Vec::new();
+        for b in self.list() {
+            if b.path.exists() {
+                continue;
+            }
+            if self.remove(&b.id)? {
+                pruned.push(b);
+            }
+        }
+        Ok(pruned)
+    }
+
     fn save(&self, boards: &BTreeMap<String, PathBuf>) -> Result<()> {
         let paths: Vec<&PathBuf> = boards.values().collect();
         write_atomic(&self.file, serde_json::to_string_pretty(&paths)?.as_bytes(), 0o644)

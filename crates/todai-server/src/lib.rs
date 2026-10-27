@@ -69,18 +69,12 @@ pub fn run(args: Args) -> Result<()> {
             }
         }
         Some(Cmd::Prune) => {
-            let r = Registry::load(&dir)?;
-            let mut pruned = 0;
-            for b in r.list() {
-                if b.path.exists() {
-                    continue;
-                }
-                if r.remove(&b.id)? {
-                    pruned += 1;
-                    println!("{}  {}", b.id, b.path.display());
-                }
+            let pruned = Registry::load(&dir)?.prune()?;
+            for b in &pruned {
+                println!("{}  {}", b.id, b.path.display());
             }
-            println!("pruned {pruned} board(s)");
+            // On stderr, so piping `prune` gets only the removed boards.
+            eprintln!("pruned {} board(s)", pruned.len());
         }
         None => {
             let files = args.files.iter().map(std::path::absolute).collect::<std::io::Result<Vec<_>>>()?;
