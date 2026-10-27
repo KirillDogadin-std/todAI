@@ -46,6 +46,8 @@ enum Cmd {
     Boards,
     /// Stop serving a board (the file is left alone).
     Forget { file: PathBuf },
+    /// Remove boards from the server's list whose .jsonl file no longer exists.
+    Prune,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -65,6 +67,20 @@ pub fn run(args: Args) -> Result<()> {
             if !Registry::load(&dir)?.remove(&todai_core::api::board_id(&path))? {
                 bail!("{} is not registered", path.display());
             }
+        }
+        Some(Cmd::Prune) => {
+            let r = Registry::load(&dir)?;
+            let mut pruned = 0;
+            for b in r.list() {
+                if b.path.exists() {
+                    continue;
+                }
+                if r.remove(&b.id)? {
+                    pruned += 1;
+                    println!("{}  {}", b.id, b.path.display());
+                }
+            }
+            println!("pruned {pruned} board(s)");
         }
         None => {
             let files = args.files.iter().map(std::path::absolute).collect::<std::io::Result<Vec<_>>>()?;
