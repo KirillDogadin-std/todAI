@@ -25,9 +25,9 @@ locked append as every other writer.
 cargo build --release -p todai-server      # or: cargo install --path crates/todai-server
 todai-server [--listen ADDR] [FILE...]     # serve; FILEs are registered too
 todai-server token [--rotate]              # print (or replace) the access token
-todai-server boards                        # list registered boards
+todai-server boards                        # list registered boards; (missing) if the file is gone
 todai-server forget FILE                   # stop serving a board
-todai-server prune                         # forget boards whose file was deleted
+todai-server prune                         # forget boards whose file was deleted (also done at startup)
 ```
 
 It listens on `127.0.0.1:7341` by default. While it runs, `todai attach` and

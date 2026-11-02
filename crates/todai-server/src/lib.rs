@@ -79,12 +79,11 @@ pub fn run(args: Args) -> Result<()> {
         }
         None => {
             let files = args.files.iter().map(std::path::absolute).collect::<std::io::Result<Vec<_>>>()?;
-            let pruned = Registry::load(&dir)?.prune()?;
-            for b in &pruned {
-                eprintln!("pruned {}", b.path.display());
+            // Boards deleted while the server was down would otherwise stay
+            // registered (and read as empty) until someone runs `prune`.
+            for b in Registry::load(&dir)?.prune()? {
+                eprintln!("todai-server: forgot {} (file is gone)", b.path.display());
             }
-            // On stderr, so piping `prune` gets only the removed boards.
-            eprintln!("pruned {} board(s)", pruned.len());
             let server = Server::bind(&Config { listen: args.listen, dir, boards: files })?;
             let addr = server.addr();
             eprintln!("todai-server: listening on http://{addr}");
