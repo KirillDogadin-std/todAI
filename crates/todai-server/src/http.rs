@@ -11,7 +11,7 @@ use tiny_http::{Header, Method, Request, Response};
 use todai_core::api::{API_VERSION, ApiError, BoardInfo, BoardView, Events, Health, MAX_WAIT_SECS, Register};
 use todai_core::store::{Actor, Event, Kind, Log};
 
-use crate::Registry;
+use crate::{Board, Registry};
 
 /// Requests in flight, long-polls included. Past this the server answers 503
 /// instead of starting more threads.
@@ -94,7 +94,10 @@ fn handle(shared: &Shared, req: &mut Request) -> Reply {
     let board = |id: &str| shared.registry.get(id).ok_or_else(|| error(404, format!("no board {id}")));
 
     let result = match (&method, route) {
-        (Method::Get, ["boards"]) => Ok(json(200, &shared.registry.list())),
+        (Method::Get, ["boards"]) => {
+            let boards: Vec<BoardInfo> = shared.registry.list().iter().map(Board::info).collect();
+            Ok(json(200, &boards))
+        }
         (Method::Post, ["boards"]) => register(shared, req),
         (Method::Get, ["boards", id]) => board(id).map(|p| state(&p)),
         (Method::Delete, ["boards", id]) => Ok(match shared.registry.remove(id) {
@@ -140,7 +143,7 @@ fn register(shared: &Shared, req: &mut Request) -> Result<Reply, Reply> {
     }
     let Register { path } = read_json(req)?;
     match shared.registry.add(&path) {
-        Ok(info) => Ok(json(201, &info)),
+        Ok(board) => Ok(json(201, &board.info())),
         Err(e) => Err(error(422, format!("{e:#}"))),
     }
 }
@@ -148,7 +151,7 @@ fn register(shared: &Shared, req: &mut Request) -> Result<Reply, Reply> {
 /// The folded board, for clients that don't fold events themselves.
 fn state(path: &Path) -> Reply {
     match Log::new(path).load_state() {
-        Ok((_, state)) => json(200, &BoardView::new(BoardInfo::new(path.to_owned()), &state)),
+        Ok((_, state)) => json(200, &BoardView::new(BoardInfo::new(path), &state)),
         Err(e) => error(500, format!("{e:#}")),
     }
 }

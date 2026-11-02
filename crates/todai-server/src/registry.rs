@@ -11,6 +11,24 @@ use std::sync::Mutex;
 use anyhow::{Context, Result, bail};
 use todai_core::api::{BoardInfo, board_id};
 
+/// A registered board. The path stays on this machine: HTTP responses carry
+/// [`BoardInfo`] instead.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Board {
+    pub id: String,
+    pub path: PathBuf,
+}
+
+impl Board {
+    pub fn new(path: PathBuf) -> Board {
+        Board { id: board_id(&path), path }
+    }
+
+    pub fn info(&self) -> BoardInfo {
+        BoardInfo::new(&self.path)
+    }
+}
+
 /// Boards the server exposes, persisted in `boards.json`. Only files
 /// registered here can be reached through the API. Every call reads the file,
 /// so `todai-server forget` takes effect on a running server too.
@@ -37,8 +55,8 @@ impl Registry {
     }
 
     /// Unreadable means empty: a request must never see a half-broken registry.
-    pub fn list(&self) -> Vec<BoardInfo> {
-        self.read().unwrap_or_default().into_values().map(BoardInfo::new).collect()
+    pub fn list(&self) -> Vec<Board> {
+        self.read().unwrap_or_default().into_values().map(Board::new).collect()
     }
 
     pub fn get(&self, id: &str) -> Option<PathBuf> {
@@ -46,7 +64,7 @@ impl Registry {
     }
 
     /// Registers an existing board file. Adding one twice is a no-op.
-    pub fn add(&self, path: &Path) -> Result<BoardInfo> {
+    pub fn add(&self, path: &Path) -> Result<Board> {
         if !path.is_absolute() {
             bail!("board path must be absolute: {}", path.display());
         }
@@ -61,7 +79,7 @@ impl Registry {
         if boards.insert(board_id(path), path.to_owned()).is_none() {
             self.save(&boards)?;
         }
-        Ok(BoardInfo::new(path.to_owned()))
+        Ok(Board::new(path.to_owned()))
     }
 
     /// Unregisters a board; whether it was registered.
@@ -76,7 +94,7 @@ impl Registry {
     }
 
     /// Unregisters boards whose file was deleted; the ones it removed.
-    pub fn prune(&self) -> Result<Vec<BoardInfo>> {
+    pub fn prune(&self) -> Result<Vec<Board>> {
         let mut pruned = Vec::new();
         for b in self.list() {
             if b.path.exists() {

@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
+use todai_core::api::BoardInfo;
 
 use crate::{agent, inbox};
 use crate::ipc::{self, Bind, Request};
@@ -23,7 +24,7 @@ pub struct Cli {
 enum Cmd {
     /// Open FILEs in the board window: new tabs if it is running, otherwise
     /// start it in the background. No FILE just raises (or starts) the window.
-    /// With --server, FILEs are board names or ids on that server (all if none).
+    /// With --server, FILEs are boards on that server: NAME, PROJECT/NAME, or id (all if none).
     Open {
         files: Vec<PathBuf>,
         /// Run the window in this process instead of detaching.
@@ -335,10 +336,11 @@ fn open_remote(server: &str, token: Option<&str>, wanted: &[PathBuf]) -> Result<
     let mut picked = Vec::new();
     for w in wanted {
         let w = w.to_string_lossy();
-        match boards.iter().filter(|b| b.id == w || b.name == w).collect::<Vec<_>>()[..] {
+        let matches = |b: &&BoardInfo| b.id == w || b.name == w || format!("{}/{}", b.project, b.name) == w;
+        match boards.iter().filter(matches).collect::<Vec<_>>()[..] {
             [b] => picked.push(b.clone()),
             [] => bail!("{server} has no board {w} (see `todai-server boards` there)"),
-            _ => bail!("{server} has several boards named {w}; use the id"),
+            _ => bail!("{server} has several boards named {w}; use PROJECT/{w} or the id"),
         }
     }
     if wanted.is_empty() {

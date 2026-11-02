@@ -51,7 +51,7 @@ Then, on the other machine:
 
 ```sh
 todai open --server http://HOST:7341 --token TOKEN           # every board
-todai open --server http://HOST:7341 --token TOKEN board     # by name or id
+todai open --server http://HOST:7341 --token TOKEN board     # by name, project/name, or id
 ```
 
 The token is saved (0600, `~/.local/state/todai/remotes.json`), so later
@@ -76,7 +76,7 @@ In `$XDG_STATE_HOME/todai/server/` (default `~/.local/state/todai/server/`):
 
 ## API
 
-All bodies are JSON. Routes are versioned under `/api/v1`; only
+All bodies are JSON. Routes are versioned under `/api/v2`; only
 `/api/health` is not, so a client can check compatibility first. Every
 versioned route needs `Authorization: Bearer TOKEN`; a missing or wrong token
 gets `401`. Errors come back as `{"error": "..."}`.
@@ -90,13 +90,13 @@ stable on their own.
 
 | Route | |
 |---|---|
-| `GET /api/health` | `{"version", "api"}`: todai's release and the API version (`1`); no token needed |
-| `GET /api/v1/boards` | `[{"id", "name", "path"}]` |
-| `POST /api/v1/boards` `{"path"}` | register an existing `.jsonl` board by absolute path; loopback only (`403` otherwise); `201` with the board |
-| `DELETE /api/v1/boards/{id}` | unregister; `204`, or `404` |
-| `GET /api/v1/boards/{id}` | the board as the operator sees it (`BoardView`, below) |
-| `GET /api/v1/boards/{id}/events?after=SEQ&wait=SECS` | `{"events", "last_seq", "reset"?}`: events with `seq > after` |
-| `POST /api/v1/boards/{id}/actions` | append one operator event (body: an event without `seq`, `ts`, `by`); returns the written event |
+| `GET /api/health` | `{"version", "api"}`: todai's release and the API version (`2`); no token needed |
+| `GET /api/v2/boards` | `[{"id", "name", "project"}]` |
+| `POST /api/v2/boards` `{"path"}` | register an existing `.jsonl` board by absolute path; loopback only (`403` otherwise); `201` with the board |
+| `DELETE /api/v2/boards/{id}` | unregister; `204`, or `404` |
+| `GET /api/v2/boards/{id}` | the board as the operator sees it (`BoardView`, below) |
+| `GET /api/v2/boards/{id}/events?after=SEQ&wait=SECS` | `{"events", "last_seq", "reset"?}`: events with `seq > after` |
+| `POST /api/v2/boards/{id}/actions` | append one operator event (body: an event without `seq`, `ts`, `by`); returns the written event |
 
 Any other path under `/api/` (including the unversioned `/api/boards`) gets
 `404` with the version this server speaks.
@@ -105,7 +105,7 @@ Any other path under `/api/` (including the unversioned `/api/boards`) gets
 
 ```json
 {
-  "board": {"id": "51c50ece8bf66d5b", "name": "board", "path": "/…/.agents/todai/board.jsonl"},
+  "board": {"id": "51c50ece8bf66d5b", "name": "board", "project": "todai"},
   "last_seq": 9,
   "decisions": [{"id": "d1", "title": "A?", "context": null, "options": ["x"], "status": "resolved", "resolution": "x"}],
   "todos": [{"id": "t1", "title": "Do", "context": null, "done": true, "note": "ok"}],
@@ -123,6 +123,17 @@ Board ids are 16 hex digits of a hash of the board's path. They are the only
 way to name a board, so a client can never reach a file that wasn't
 registered.
 
+Responses never include a board's path, so a token holder doesn't learn the
+server's directory layout. `name` is the file name without `.jsonl`, and
+`project` tells same-named boards apart: the folder holding `.agents/todai/`
+for a board in a project (`~/code/todai/.agents/todai/main.jsonl` →
+`todai`), else the folder the file is in. On the server machine,
+`todai-server boards` shows full paths.
+
+API v1 (todai 0.4.0) returned `path` instead of `project`. A window and a
+server that speak different versions refuse each other with a message
+naming both.
+
 ### Following a board
 
 Ask for `events?after=0` once and fold the result (or start from the board
@@ -137,7 +148,7 @@ returned events from scratch. The desktop window does exactly this
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" -d '{"type":"decision.resolve","id":"d1","text":"yes"}' \
-  http://127.0.0.1:7341/api/v1/boards/$ID/actions
+  http://127.0.0.1:7341/api/v2/boards/$ID/actions
 ```
 
 Only operator event types are accepted (`decision.resolve`,

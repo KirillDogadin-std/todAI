@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 use crate::store::{DecisionStatus, Event, State};
 
 /// Version of the routes under `/api/v{N}` and of the types in this module.
-pub const API_VERSION: u32 = 1;
+pub const API_VERSION: u32 = 2;
 
-/// Prefix of every versioned route, e.g. `/api/v1/boards`.
+/// Prefix of every versioned route, e.g. `/api/v2/boards`.
 pub fn prefix() -> String {
     format!("/api/v{API_VERSION}")
 }
@@ -36,30 +36,33 @@ pub struct Health {
     pub api: u32,
 }
 
-/// One registered board, as listed by `GET /api/boards`.
+/// One registered board, as listed by `GET /api/v2/boards`. Never carries
+/// the board's path: token holders don't get to see the server's directory
+/// layout (API v1 did).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct BoardInfo {
     /// Opaque id used in URLs; see [`board_id`].
     pub id: String,
     /// The file name without `.jsonl`.
     pub name: String,
-    /// Where the board lives on the server's machine, for display only.
-    pub path: PathBuf,
+    /// The project the board belongs to, to tell same-named boards apart;
+    /// see [`board_project`].
+    pub project: String,
 }
 
 impl BoardInfo {
-    pub fn new(path: PathBuf) -> BoardInfo {
-        BoardInfo { id: board_id(&path), name: board_name(&path), path }
+    pub fn new(path: &Path) -> BoardInfo {
+        BoardInfo { id: board_id(path), name: board_name(path), project: board_project(path) }
     }
 }
 
-/// `POST /api/boards`: start serving the board at `path` (absolute).
+/// `POST /api/v2/boards`: start serving the board at `path` (absolute).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Register {
     pub path: PathBuf,
 }
 
-/// `GET /api/boards/{id}/events?after=SEQ&wait=SECS`.
+/// `GET /api/v2/boards/{id}/events?after=SEQ&wait=SECS`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Events {
     /// Events with `seq > after`, in order.
@@ -71,7 +74,7 @@ pub struct Events {
     pub reset: bool,
 }
 
-/// `GET /api/v1/boards/{id}`: the board as the operator sees it. Trashed
+/// `GET /api/v2/boards/{id}`: the board as the operator sees it. Trashed
 /// items are already gone; elaborations are in request order.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct BoardView {
@@ -193,6 +196,19 @@ pub fn board_id(path: &Path) -> String {
     format!("{h:016x}")
 }
 
+/// The folder holding `.agents/todai/` for a board in a project, else the
+/// folder the file is in (`/` for a file at the root).
+pub fn board_project(path: &Path) -> String {
+    let dir = path.parent().unwrap_or(path);
+    let root = match (dir.file_name(), dir.parent()) {
+        (Some(t), Some(agents)) if t == "todai" && agents.file_name().is_some_and(|a| a == ".agents") => {
+            agents.parent().unwrap_or(agents)
+        }
+        _ => dir,
+    };
+    root.file_name().map_or_else(|| root.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned())
+}
+
 pub fn board_name(path: &Path) -> String {
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     name.strip_suffix(".jsonl").unwrap_or(&name).to_owned()
@@ -219,7 +235,7 @@ mod tests {
             ev(9, Actor::Agent, Kind::ElabAdd { rid: s("r1"), text_md: s("**C** is") }),
         ];
         let state = State::fold(&events).unwrap();
-        let view = BoardView::new(BoardInfo::new("/b.jsonl".into()), &state);
+        let view = BoardView::new(BoardInfo::new(Path::new("/b.jsonl")), &state);
         let statuses: Vec<_> = view.decisions.iter().map(|d| (d.status, d.resolution.as_deref())).collect();
         assert_eq!(
             statuses,
@@ -235,6 +251,8 @@ mod tests {
             json,
             serde_json::json!({"id": "d1", "title": "A?", "context": null, "options": ["x"], "status": "resolved", "resolution": "x"})
         );
+        let board = serde_json::to_value(&view.board).unwrap();
+        assert_eq!(board, serde_json::json!({"id": board_id(Path::new("/b.jsonl")), "name": "b", "project": "/"}));
         let back: BoardView = serde_json::from_value(serde_json::to_value(&view).unwrap()).unwrap();
         assert_eq!(back, view);
     }
@@ -246,5 +264,14 @@ mod tests {
         assert_ne!(board_id(Path::new("/a/b.jsonl")), board_id(Path::new("/a/c.jsonl")));
         assert_eq!(board_id(Path::new("")), "cbf29ce484222325");
         assert_eq!(board_name(Path::new("/x/.agents/todai/board.jsonl")), "board");
+    }
+
+    #[test]
+    fn project_names_the_folder_not_the_path() {
+        let p = |s: &str| board_project(Path::new(s));
+        assert_eq!(p("/home/u/code/todai/.agents/todai/main.jsonl"), "todai");
+        assert_eq!(p("/home/u/notes/plan.jsonl"), "notes");
+        assert_eq!(p("/srv/todai/x.jsonl"), "todai", "a folder named todai outside .agents is just a folder");
+        assert_eq!(p("/x.jsonl"), "/");
     }
 }

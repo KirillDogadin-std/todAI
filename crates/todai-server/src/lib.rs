@@ -18,7 +18,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Args as ClapArgs, Subcommand};
 use todai_core::api::DEFAULT_LISTEN;
 
-pub use registry::Registry;
+pub use registry::{Board, Registry};
 
 /// `todai-server` and `todai serve` take these.
 #[derive(ClapArgs, Debug, Clone)]

@@ -62,11 +62,11 @@ fn token_is_required_except_for_health() {
     let mut r = f.agent.get(f.url("/api/health")).call().unwrap();
     assert_eq!(r.status(), 200);
     assert_eq!(r.body_mut().read_json::<Health>().unwrap().api, API_VERSION);
-    let r = f.agent.get(f.url("/api/v1/boards")).call().unwrap();
+    let r = f.agent.get(f.url("/api/v2/boards")).call().unwrap();
     assert_eq!(r.status(), 401);
-    let r = f.agent.get(f.url("/api/v1/boards")).header("Authorization", "Bearer nope").call().unwrap();
+    let r = f.agent.get(f.url("/api/v2/boards")).header("Authorization", "Bearer nope").call().unwrap();
     assert_eq!(r.status(), 401);
-    assert_eq!(f.get("/api/v1/boards").0, 200);
+    assert_eq!(f.get("/api/v2/boards").0, 200);
 }
 
 #[test]
@@ -74,8 +74,9 @@ fn unversioned_and_unknown_versions_are_refused() {
     let f = Fixture::new();
     let (status, err) = f.get("/api/boards");
     assert_eq!(status, 404);
-    assert!(err["error"].as_str().unwrap().contains("/api/v1"), "{err}");
-    assert_eq!(f.get("/api/v2/boards").0, 404);
+    assert!(err["error"].as_str().unwrap().contains("/api/v2"), "{err}");
+    assert_eq!(f.get("/api/v1/boards").0, 404, "v1 is gone");
+    assert_eq!(f.get("/api/v3/boards").0, 404);
 }
 
 #[test]
@@ -85,47 +86,49 @@ fn token_and_registry_persist() {
     assert_eq!(registry::load_token(&dir).unwrap(), f.server.token);
     let mode = std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(dir.join("token")).unwrap().permissions());
     assert_eq!(mode & 0o777, 0o600);
-    assert_eq!(Registry::load(&dir).unwrap().list(), vec![BoardInfo::new(f.log.path().into())]);
+    assert_eq!(Registry::load(&dir).unwrap().list(), vec![Board::new(f.log.path().into())]);
     assert_eq!(local(&dir).unwrap(), (f.server.addr, f.server.token.clone()));
 }
 
 #[test]
 fn lists_and_reads_boards() {
     let f = Fixture::new();
-    let (status, boards) = f.get("/api/v1/boards");
+    let (status, boards) = f.get("/api/v2/boards");
     assert_eq!(status, 200);
+    let tmp = f.dir.path().to_string_lossy().into_owned();
+    assert!(!boards.to_string().contains(&tmp), "no server paths in responses: {boards}");
     let boards: Vec<BoardInfo> = serde_json::from_value(boards).unwrap();
-    assert_eq!(boards, vec![BoardInfo::new(f.log.path().into())]);
+    assert_eq!(boards, vec![BoardInfo::new(f.log.path())]);
 
     // Parsed into the contract types, so a shape change fails here first.
-    let (status, board) = f.get(&format!("/api/v1/boards/{}", f.id()));
+    let (status, board) = f.get(&format!("/api/v2/boards/{}", f.id()));
     assert_eq!(status, 200);
     let board: BoardView = serde_json::from_value(board).unwrap();
     assert_eq!(board.board.name, "b");
     assert_eq!((board.decisions[0].title.as_str(), board.decisions[0].status), ("Ship?", DecisionState::Pending));
     assert_eq!(board.last_seq, 1);
 
-    assert_eq!(f.get("/api/v1/boards/0000000000000000").0, 404);
+    assert_eq!(f.get("/api/v2/boards/0000000000000000").0, 404);
     assert_eq!(f.get("/api/nope").0, 404);
 }
 
 #[test]
 fn events_after_seq() {
     let f = Fixture::new();
-    let (_, all) = f.get(&format!("/api/v1/boards/{}/events", f.id()));
+    let (_, all) = f.get(&format!("/api/v2/boards/{}/events", f.id()));
     let all: Events = serde_json::from_value(all).unwrap();
     assert_eq!((all.events.len(), all.last_seq, all.reset), (1, 1, false));
 
-    let (_, none) = f.get(&format!("/api/v1/boards/{}/events?after=1", f.id()));
+    let (_, none) = f.get(&format!("/api/v2/boards/{}/events?after=1", f.id()));
     assert_eq!(serde_json::from_value::<Events>(none).unwrap().events, vec![]);
 
     // Past the end: the file was replaced, so the client gets everything again.
-    let (_, reset) = f.get(&format!("/api/v1/boards/{}/events?after=9", f.id()));
+    let (_, reset) = f.get(&format!("/api/v2/boards/{}/events?after=9", f.id()));
     let reset: Events = serde_json::from_value(reset).unwrap();
     assert!(reset.reset);
     assert_eq!(reset.events.len(), 1);
 
-    assert_eq!(f.get(&format!("/api/v1/boards/{}/events?after=x", f.id())).0, 400);
+    assert_eq!(f.get(&format!("/api/v2/boards/{}/events?after=x", f.id())).0, 400);
 }
 
 #[test]
@@ -138,7 +141,7 @@ fn long_poll_wakes_on_append() {
             .unwrap();
     });
     let start = Instant::now();
-    let (_, ev) = f.get(&format!("/api/v1/boards/{}/events?after=1&wait=10", f.id()));
+    let (_, ev) = f.get(&format!("/api/v2/boards/{}/events?after=1&wait=10", f.id()));
     let ev: Events = serde_json::from_value(ev).unwrap();
     assert!(start.elapsed() < Duration::from_secs(5), "returned on the append, not the timeout");
     assert_eq!(ev.last_seq, 2);
@@ -146,7 +149,7 @@ fn long_poll_wakes_on_append() {
     writer.join().unwrap();
 
     let start = Instant::now();
-    let (_, ev) = f.get(&format!("/api/v1/boards/{}/events?after=2&wait=1", f.id()));
+    let (_, ev) = f.get(&format!("/api/v2/boards/{}/events?after=2&wait=1", f.id()));
     assert!(start.elapsed() >= Duration::from_secs(1));
     assert_eq!(serde_json::from_value::<Events>(ev).unwrap().events, vec![]);
 }
@@ -154,7 +157,7 @@ fn long_poll_wakes_on_append() {
 #[test]
 fn operator_actions_are_appended_and_validated() {
     let f = Fixture::new();
-    let actions = format!("/api/v1/boards/{}/actions", f.id());
+    let actions = format!("/api/v2/boards/{}/actions", f.id());
 
     let (status, ev) = f.post(&actions, json!({"type": "decision.resolve", "id": "d1", "text": "yes"}));
     assert_eq!(status, 200, "{ev}");
@@ -181,24 +184,24 @@ fn operator_actions_are_appended_and_validated() {
 fn register_and_forget() {
     let f = Fixture::new();
     let other = f.dir.path().join("other.jsonl");
-    let (status, _) = f.post("/api/v1/boards", json!({"path": other}));
+    let (status, _) = f.post("/api/v2/boards", json!({"path": other}));
     assert_eq!(status, 422, "the file must exist");
     std::fs::write(&other, "").unwrap();
-    assert_eq!(f.post("/api/v1/boards", json!({"path": "rel.jsonl"})).0, 422);
-    assert_eq!(f.post("/api/v1/boards", json!({"path": f.dir.path().join("server/token")})).0, 422);
+    assert_eq!(f.post("/api/v2/boards", json!({"path": "rel.jsonl"})).0, 422);
+    assert_eq!(f.post("/api/v2/boards", json!({"path": f.dir.path().join("server/token")})).0, 422);
 
-    let (status, info) = f.post("/api/v1/boards", json!({"path": other}));
+    let (status, info) = f.post("/api/v2/boards", json!({"path": other}));
     assert_eq!(status, 201);
     assert_eq!(info["id"], board_id(&other));
-    assert_eq!(f.get("/api/v1/boards").1.as_array().unwrap().len(), 2);
+    assert_eq!(f.get("/api/v2/boards").1.as_array().unwrap().len(), 2);
 
     let del = |id: &str| {
-        let r = f.agent.delete(f.url(&format!("/api/v1/boards/{id}"))).header("Authorization", f.auth()).call();
+        let r = f.agent.delete(f.url(&format!("/api/v2/boards/{id}"))).header("Authorization", f.auth()).call();
         r.unwrap().status().as_u16()
     };
     assert_eq!(del(&board_id(&other)), 204);
     assert_eq!(del(&board_id(&other)), 404);
-    assert_eq!(f.get("/api/v1/boards").1.as_array().unwrap().len(), 1);
+    assert_eq!(f.get("/api/v2/boards").1.as_array().unwrap().len(), 1);
 }
 
 #[test]
@@ -206,15 +209,15 @@ fn prune_forgets_only_boards_whose_file_is_gone() {
     let f = Fixture::new();
     let gone = f.dir.path().join("gone.jsonl");
     std::fs::write(&gone, "").unwrap();
-    assert_eq!(f.post("/api/v1/boards", json!({"path": gone})).0, 201);
+    assert_eq!(f.post("/api/v2/boards", json!({"path": gone})).0, 201);
     std::fs::remove_file(&gone).unwrap();
 
     // What `todai-server prune` does: a second Registry on the same dir.
     let registry = Registry::load(&f.dir.path().join("server")).unwrap();
-    assert_eq!(registry.prune().unwrap(), vec![BoardInfo::new(gone)]);
-    let (_, boards) = f.get("/api/v1/boards");
+    assert_eq!(registry.prune().unwrap(), vec![Board::new(gone)]);
+    let (_, boards) = f.get("/api/v2/boards");
     let boards: Vec<BoardInfo> = serde_json::from_value(boards).unwrap();
-    assert_eq!(boards, vec![BoardInfo::new(f.log.path().into())], "the board whose file exists stays");
+    assert_eq!(boards, vec![BoardInfo::new(f.log.path())], "the board whose file exists stays");
 
     assert_eq!(registry.prune().unwrap(), vec![], "nothing left to prune");
 }
@@ -224,6 +227,6 @@ fn forget_from_the_cli_reaches_a_running_server() {
     let f = Fixture::new();
     // What `todai-server forget` does: a second Registry on the same dir.
     assert!(Registry::load(&f.dir.path().join("server")).unwrap().remove(&f.id()).unwrap());
-    assert_eq!(f.get("/api/v1/boards").1, json!([]));
-    assert_eq!(f.get(&format!("/api/v1/boards/{}", f.id())).0, 404);
+    assert_eq!(f.get("/api/v2/boards").1, json!([]));
+    assert_eq!(f.get(&format!("/api/v2/boards/{}", f.id())).0, 404);
 }
