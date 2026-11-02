@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="referrer" content="no-referrer">
+<title>todai</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/app.css">
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<header>
+  <a id="home" href="#/">todai</a>
+  <span id="where"></span>
+  <span id="status" role="status"></span>
+</header>
+<main id="main"></main>
+<div id="ask" hidden>
+  <form id="ask-form">
+    <p>Ask the agent about</p>
+    <blockquote id="ask-selection"></blockquote>
+    <textarea id="ask-note" rows="3" placeholder="your question (optional)"></textarea>
+    <div class="row">
+      <button type="button" id="ask-cancel">Cancel</button>
+      <button type="submit" class="primary">Ask</button>
+    </div>
+  </form>
+</div>
+</body>
+</html>

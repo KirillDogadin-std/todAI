@@ -70,6 +70,28 @@ fn token_is_required_except_for_health() {
 }
 
 #[test]
+fn web_app_is_served_without_a_token() {
+    let f = Fixture::new();
+    let mut r = f.agent.get(f.url("/")).call().unwrap();
+    assert_eq!(r.status(), 200);
+    let csp = r.headers().get("Content-Security-Policy").expect("CSP on the page").to_str().unwrap().to_owned();
+    assert!(csp.contains("script-src 'self'") && !csp.contains("unsafe"), "{csp}");
+    assert!(r.body_mut().read_to_string().unwrap().contains("/app.js"));
+    for (path, ctype) in [("/app.js", "text/javascript"), ("/markdown.js", "text/javascript"), ("/app.css", "text/css")] {
+        let r = f.agent.get(f.url(path)).call().unwrap();
+        assert_eq!(r.status(), 200, "{path}");
+        assert!(r.headers().get("Content-Type").unwrap().to_str().unwrap().starts_with(ctype), "{path}");
+    }
+    assert_eq!(f.agent.get(f.url("/nope")).call().unwrap().status(), 404);
+    assert_eq!(f.agent.get(f.url("/api/v2/boards")).call().unwrap().status(), 401, "data still needs the token");
+}
+
+#[test]
+fn pair_url_keeps_the_token_out_of_the_request() {
+    assert_eq!(pair_url("http://box:7341/", "ab12"), "http://box:7341/#token=ab12");
+}
+
+#[test]
 fn unversioned_and_unknown_versions_are_refused() {
     let f = Fixture::new();
     let (status, err) = f.get("/api/boards");

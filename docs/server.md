@@ -2,7 +2,7 @@
 
 `todai-server` serves boards over HTTP, so you can answer them from
 somewhere other than the machine the agents run on: the desktop window on
-another computer today, a phone web app later. It is a separate, headless
+another computer, or the built-in web app on your phone. It is a separate, headless
 binary (about 1.4 MB, a few MB of memory, no GL); `todai serve` runs the same
 server from the main binary.
 
@@ -28,6 +28,7 @@ todai-server token [--rotate]              # print (or replace) the access token
 todai-server boards                        # list registered boards; (missing) if the file is gone
 todai-server forget FILE                   # stop serving a board
 todai-server prune                         # forget boards whose file was deleted (also done at startup)
+todai-server pair [--host HOST]            # link + QR code that open the web app with the token
 ```
 
 It listens on `127.0.0.1:7341` by default. While it runs, `todai attach` and
@@ -63,6 +64,33 @@ Remote tabs look and work like local ones. The tab title is
 `board@host`. If the server goes away the status bar says so and the tab
 reconnects on its own; an action that could not be sent puts your text back
 in its field.
+
+## Web app
+
+The server also serves a small web app at `/` for answering boards from a
+phone: board list by project, then a board with what waits for you,
+elaboration threads and finished items. You can resolve, mark done, undo,
+reopen, trash, and ask for an elaboration (select text first to ask about
+just that, or tap **Ask** for the whole item). Changes show up live.
+
+To pair a phone, start the server where the phone can reach it (see below),
+then on that machine:
+
+```sh
+todai-server pair --host <tailscale-name-or-LAN-IP>
+todai-server pair --host https://box.tailnet.ts.net     # behind `tailscale serve`
+```
+
+Scan the QR code. The token travels in the link's `#fragment`, which
+browsers never send to the server or put in logs; the app keeps it in the
+browser's storage and removes it from the address bar. Anyone who sees the
+QR code or link can answer your boards, same as with the token itself; to
+revoke every device, run `todai-server token --rotate` and pair again. The
+pairing screen also takes a pasted token.
+
+The app is plain HTML, CSS and JavaScript in `crates/todai-server/web/`,
+built into the binary; no build step. Only same-origin scripts may run
+(`Content-Security-Policy`), and board text is never parsed as HTML.
 
 ## Files
 
@@ -163,3 +191,4 @@ id, resolving a withdrawn decision, ...) gets `422` and is not written.
   get `503`.
 - Request bodies up to 1 MB.
 - No TLS, CORS or rate limiting in-process.
+- The web app's files are served without a token; they hold no data.

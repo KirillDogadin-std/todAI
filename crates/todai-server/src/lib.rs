@@ -10,6 +10,7 @@
 mod http;
 mod registry;
 
+use std::io::IsTerminal;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -48,6 +49,15 @@ enum Cmd {
     Forget { file: PathBuf },
     /// Remove boards from the server's list whose .jsonl file no longer exists.
     Prune,
+    /// Print a link and QR code that open the web app with the token, for
+    /// pairing a phone. Anyone who sees them has full access, like the token.
+    Pair {
+        /// Host the phone reaches this server at (Tailscale name, LAN IP), or
+        /// a full base URL such as https://box.tailnet.ts.net from
+        /// `tailscale serve`. Defaults to the address the server listens on.
+        #[arg(long)]
+        host: Option<String>,
+    },
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -77,6 +87,7 @@ pub fn run(args: Args) -> Result<()> {
             // On stderr, so piping `prune` gets only the removed boards.
             eprintln!("pruned {} board(s)", pruned.len());
         }
+        Some(Cmd::Pair { host }) => pair(&dir, host.as_deref())?,
         None => {
             let files = args.files.iter().map(std::path::absolute).collect::<std::io::Result<Vec<_>>>()?;
             // Boards deleted while the server was down would otherwise stay
@@ -172,6 +183,44 @@ impl Drop for Handle {
 
 /// Where a running local server listens and the token it accepts, if one
 /// has run with this state dir. The CLI uses it to register boards.
+/// The web app's address with the token in the fragment, which browsers
+/// never send to the server or put in logs; the app moves it to storage.
+pub fn pair_url(base: &str, token: &str) -> String {
+    format!("{}/#token={token}", base.trim_end_matches('/'))
+}
+
+fn pair(dir: &Path, host: Option<&str>) -> Result<()> {
+    let token = registry::load_token(dir)?;
+    let addr = local(dir).map(|(a, _)| a);
+    let port = addr.map_or_else(|| DEFAULT_LISTEN.rsplit(':').next().unwrap_or("7341").to_owned(), |a| a.port().to_string());
+    let base = match host {
+        Some(h) if h.contains("://") => h.to_owned(),
+        Some(h) => format!("http://{h}:{port}"),
+        None => {
+            let ip = addr.map_or_else(|| "127.0.0.1".to_owned(), |a| a.ip().to_string());
+            if addr.is_none_or(|a| a.ip().is_loopback()) {
+                eprintln!("todai-server: a phone can't reach {ip}; pass --host with this machine's Tailscale name or LAN IP");
+            }
+            format!("http://{ip}:{port}")
+        }
+    };
+    if addr.is_none() {
+        eprintln!("todai-server: no server is running here; start `todai-server` before scanning");
+    }
+    let url = pair_url(&base, &token);
+    let qr = qrcode::QrCode::new(url.as_bytes()).context("make QR code")?;
+    let art = qr.render::<qrcode::render::unicode::Dense1x2>().quiet_zone(true).build();
+    // Scanners want dark modules on a light background. On a dark terminal
+    // the blocks would draw light, so paint each line black on white.
+    let art = if std::io::stdout().is_terminal() {
+        art.lines().map(|l| format!("\x1b[30;107m{l}\x1b[0m\n")).collect()
+    } else {
+        art + "\n"
+    };
+    println!("{art}{url}");
+    Ok(())
+}
+
 pub fn local(dir: &Path) -> Option<(SocketAddr, String)> {
     let addr = std::fs::read_to_string(dir.join("addr")).ok()?.trim().parse().ok()?;
     let token = std::fs::read_to_string(dir.join("token")).ok()?.trim().to_owned();

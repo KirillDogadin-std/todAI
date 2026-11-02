@@ -59,6 +59,10 @@ test-only code must be warning-free too: check with
   `crates/todai-core/src/api.rs`. Change them together; `board_id` must stay
   stable (saved sessions store it). Responses use the `*View` types there,
   never `store` types; changing their JSON shape means bumping `API_VERSION`.
+- **The web app (`crates/todai-server/web/`) has no build step** and is
+  embedded with `include_str!`. Board text reaches the DOM only through
+  `textContent` (`markdown.js` builds nodes); never use `innerHTML` for it.
+  The page's CSP forbids inline and third-party scripts; keep it that way.
 - **Keys are documented in three places**: `CHEATSHEET` in `src/gui/mod.rs`,
   `docs/keyboard.md`, and the behavior in `src/gui/nav.rs`. Change them
   together.

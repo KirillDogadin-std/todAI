@@ -16,7 +16,7 @@ remote frontends use instead of the file.
                                          │
                           todai-server ──┘  reads, long-polls, appends operator events
                                 ▲
-                                └── HTTP + token ── remote tab in a window elsewhere, web app
+                                └── HTTP + token ── remote tab in a window elsewhere, web app (served at `/`)
 ```
 
 ## Crates

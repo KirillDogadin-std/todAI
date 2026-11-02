@@ -1,4 +1,5 @@
-//! Request routing and the handlers behind `/api/...`.
+//! Request routing: the web app's static files at `/`, and the handlers
+//! behind `/api/...`.
 
 use std::io::Read;
 use std::path::Path;
@@ -35,11 +36,31 @@ impl Shared {
 struct Reply {
     status: u16,
     body: Option<Vec<u8>>,
+    content_type: &'static str,
 }
 
 fn json(status: u16, body: &impl Serialize) -> Reply {
-    Reply { status, body: Some(serde_json::to_vec(body).unwrap_or_default()) }
+    Reply { status, body: Some(serde_json::to_vec(body).unwrap_or_default()), content_type: "application/json" }
 }
+
+/// The web app (`crates/todai-server/web/`), built into the binary. Served
+/// without a token: it holds no data, and asks for the token itself.
+fn asset(path: &str) -> Option<Reply> {
+    let (body, content_type) = match path {
+        "/" | "/index.html" => (include_str!("../web/index.html"), "text/html; charset=utf-8"),
+        "/app.js" => (include_str!("../web/app.js"), "text/javascript; charset=utf-8"),
+        "/markdown.js" => (include_str!("../web/markdown.js"), "text/javascript; charset=utf-8"),
+        "/app.css" => (include_str!("../web/app.css"), "text/css; charset=utf-8"),
+        "/icon.svg" => (include_str!("../web/icon.svg"), "image/svg+xml"),
+        _ => return None,
+    };
+    Some(Reply { status: 200, body: Some(body.as_bytes().to_vec()), content_type })
+}
+
+/// Same-origin only and no inline code, so text an agent wrote can't run as
+/// script even if the app had an escaping bug.
+const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; \
+                   manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 fn error(status: u16, msg: impl Into<String>) -> Reply {
     json(status, &ApiError { error: msg.into() })
@@ -64,8 +85,17 @@ pub fn dispatch(shared: &Arc<Shared>, req: Request) {
 fn respond(req: Request, reply: Reply) {
     let result = match reply.body {
         Some(body) => {
-            let ct = Header::from_bytes("Content-Type", "application/json").unwrap();
-            req.respond(Response::from_data(body).with_status_code(reply.status).with_header(ct))
+            let header = |k: &str, v: &str| Header::from_bytes(k, v).unwrap();
+            let mut res = Response::from_data(body)
+                .with_status_code(reply.status)
+                .with_header(header("Content-Type", reply.content_type))
+                .with_header(header("X-Content-Type-Options", "nosniff"))
+                .with_header(header("Referrer-Policy", "no-referrer"))
+                .with_header(header("Cache-Control", "no-cache"));
+            if reply.content_type.starts_with("text/html") {
+                res.add_header(header("Content-Security-Policy", CSP));
+            }
+            req.respond(res)
         }
         None => req.respond(Response::empty(reply.status)),
     };
@@ -81,6 +111,9 @@ fn handle(shared: &Shared, req: &mut Request) -> Reply {
     // Unversioned and open, so clients can check compatibility first.
     if method == Method::Get && segs == ["api", "health"] {
         return json(200, &Health { version: env!("CARGO_PKG_VERSION").into(), api: API_VERSION });
+    }
+    if method == Method::Get && segs.first() != Some(&"api") {
+        return asset(path).unwrap_or_else(|| error(404, "not found; the API is under /api"));
     }
     let version = format!("v{API_VERSION}");
     let route = match segs.as_slice() {
@@ -101,7 +134,7 @@ fn handle(shared: &Shared, req: &mut Request) -> Reply {
         (Method::Post, ["boards"]) => register(shared, req),
         (Method::Get, ["boards", id]) => board(id).map(|p| state(&p)),
         (Method::Delete, ["boards", id]) => Ok(match shared.registry.remove(id) {
-            Ok(true) => Reply { status: 204, body: None },
+            Ok(true) => Reply { status: 204, body: None, content_type: "" },
             Ok(false) => error(404, format!("no board {id}")),
             Err(e) => error(500, format!("{e:#}")),
         }),

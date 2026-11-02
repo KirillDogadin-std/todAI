@@ -8,6 +8,8 @@ description = "Headless todai server: serves boards over HTTP to operator fronte
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+# Pure Rust, no image deps without default features: terminal QR codes for `pair`.
+qrcode = { version = "0.14.1", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 tiny_http = "0.12.0"

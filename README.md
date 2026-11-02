@@ -16,7 +16,8 @@ interrupted.
 - **Plain data:** each board is an append-only JSONL file you can read, grep,
   or commit.
 - **Answer from elsewhere:** an optional headless server shares boards over
-  HTTP with the window on another machine ([docs/server.md](docs/server.md)).
+  HTTP with the window on another machine, and serves a web app for your
+  phone, paired with a QR code ([docs/server.md](docs/server.md)).
 
 ## Install
 
