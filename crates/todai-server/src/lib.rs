@@ -59,7 +59,8 @@ pub fn run(args: Args) -> Result<()> {
         }
         Some(Cmd::Boards) => {
             for b in Registry::load(&dir)?.list() {
-                println!("{}  {}", b.id, b.path.display());
+                let note = if b.path.exists() { "" } else { "  (missing)" };
+                println!("{}  {}{note}", b.id, b.path.display());
             }
         }
         Some(Cmd::Forget { file }) => {
@@ -78,6 +79,12 @@ pub fn run(args: Args) -> Result<()> {
         }
         None => {
             let files = args.files.iter().map(std::path::absolute).collect::<std::io::Result<Vec<_>>>()?;
+            let pruned = Registry::load(&dir)?.prune()?;
+            for b in &pruned {
+                eprintln!("pruned {}", b.path.display());
+            }
+            // On stderr, so piping `prune` gets only the removed boards.
+            eprintln!("pruned {} board(s)", pruned.len());
             let server = Server::bind(&Config { listen: args.listen, dir, boards: files })?;
             let addr = server.addr();
             eprintln!("todai-server: listening on http://{addr}");
