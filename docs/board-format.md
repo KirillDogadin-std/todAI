@@ -38,6 +38,10 @@ events in order. Always write through `todai`; it validates every event.
 Ids are assigned by the writer: `d`, `t` and `r` followed by a counter.
 Trashed ids are never reused.
 
+`title`, `context` and `text_md` are markdown. On cards, titles and contexts
+keep their line breaks as written (plain lines are not joined into a
+paragraph), and markers like backticks are not shown.
+
 ## Rules
 
 - **Validation.** An event is rejected if its actor is wrong or it refers to

@@ -19,6 +19,8 @@ distinct NAME per independent workflow. Pass the printed path as BOARD below.
 
 - Titles are the short form shown on the board: under 80 characters, one
   question or one action each. Put detail in `-c`.
+- Titles and contexts render as markdown, with line breaks kept as written.
+  Put commands in fenced code blocks (```sh) and names in `backticks`.
 - Offer `-o` options when the answer is a choice; the operator can still
   type anything.
 - Todos are things only the operator can do (credentials, accounts, hardware,

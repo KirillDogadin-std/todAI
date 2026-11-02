@@ -2777,6 +2777,7 @@ dependencies = [
  "egui_commonmark",
  "libc",
  "notify",
+ "pulldown-cmark",
  "serde",
  "serde_json",
  "skrifa",

@@ -1,4 +1,5 @@
 mod board;
+mod cardtext;
 mod nav;
 mod tab;
 mod textnav;

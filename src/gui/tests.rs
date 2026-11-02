@@ -194,6 +194,20 @@ fn visual_selection_elaborate_with_message() {
 }
 
 #[test]
+fn card_markdown_is_selected_as_shown() {
+    let mut h = Harness::new();
+    let context = "Run:\n```sh\ncargo test\n```\nthen `git push`.".to_owned();
+    h.log.append(Actor::Agent, |_| Ok(Kind::TodoAdd { id: "t2".into(), title: "Ship **it**".into(), context: Some(context) })).unwrap();
+    h.frame(vec![]);
+    h.frame(vec![]);
+    h.move_to(item("t2"));
+    h.type_keys("V");
+    h.key(Key::Enter, Modifiers::NONE);
+    let selection = &h.tab.nav.prompt.as_ref().expect("prompt open").selection;
+    assert_eq!(selection, "Ship it\nRun:\ncargo test\nthen git push.");
+}
+
+#[test]
 fn e_elaborates_whole_item_and_esc_cancels() {
     let mut h = Harness::new();
     h.move_to(item("d2"));
@@ -300,7 +314,7 @@ fn withdrawn_decision_shows_in_done_without_reopen() {
     h.move_to(item("d2")); // reachable in Done
     h.type_keys("x"); // reopen is not allowed for withdrawn: no event
     assert_eq!(h.state().decision("d2").unwrap().status, DecisionStatus::Withdrawn);
-    assert!(super::nav::item_parts(&h.tab.state, &item("d2")).iter().all(|p| p.1 == super::nav::Weight::Struck));
+    assert!(super::nav::item_parts(&h.tab.state, &item("d2")).iter().all(|p| p.weight == super::nav::Weight::Struck));
 }
 
 #[test]
@@ -533,7 +547,7 @@ fn default_fonts_have_glyphs_we_use() {
     let font = egui::FontId::proportional(14.0);
     // Every symbol drawn outside plain text. Many arrows and checkmarks
     // (→ ✓ ✔ ▶) are NOT in egui's default fonts and render as boxes.
-    let src = [include_str!("mod.rs"), include_str!("board.rs")].concat();
+    let src = [include_str!("mod.rs"), include_str!("board.rs"), include_str!("cardtext.rs")].concat();
     // 💀 is only in the window title and notifications, which the compositor
     // and notification daemon draw with system fonts; egui can't draw it.
     let used: String = src.chars().filter(|c| !c.is_ascii() && *c != '💀').collect();

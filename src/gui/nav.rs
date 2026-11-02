@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use egui::{Event, Galley, Key, Modifiers};
 
+use super::cardtext::{self, Part};
 use super::textnav as tn;
 use crate::store::{DecisionStatus, Kind, State};
 
@@ -168,43 +169,43 @@ impl Default for Nav {
 
 /// The text of an item as shown on its card, split into styled parts. Visual
 /// mode and the mouse-selectable text both index into the concatenation.
-pub fn item_parts(state: &State, focus: &Focus) -> Vec<(String, Weight)> {
-    let with_context = |title: &str, ctx: &Option<String>| {
-        let mut v = vec![(title.to_owned(), Weight::Strong)];
+pub fn item_parts(state: &State, focus: &Focus) -> Vec<Part> {
+    // Title and context are markdown; see `cardtext`.
+    let with_context = |title: &str, ctx: &Option<String>, struck: bool| {
+        let (strong, weak) = if struck { (Weight::Struck, Weight::Struck) } else { (Weight::Strong, Weight::Weak) };
+        let mut v = cardtext::render(title, strong);
         if let Some(c) = ctx {
-            v.push((format!("\n{c}"), Weight::Weak));
+            v.push(Part::plain("\n", weak));
+            v.extend(cardtext::render(c, weak));
         }
         v
     };
     match focus {
         Focus::Item(id) => {
             if let Some(d) = state.decision(id) {
-                let mut parts = with_context(&d.title, &d.context);
-                if d.status == DecisionStatus::Withdrawn {
-                    parts.iter_mut().for_each(|p| p.1 = Weight::Struck);
-                }
-                parts
+                with_context(&d.title, &d.context, d.status == DecisionStatus::Withdrawn)
             } else if let Some(t) = state.todo(id) {
-                with_context(&t.title, &t.context)
+                with_context(&t.title, &t.context, false)
             } else {
                 Vec::new()
             }
         }
-        // A thread card reads as its turns' answers in order.
+        // A thread card reads as its turns' answers in order, as written:
+        // `elab_target` finds the turn a selection came from in the raw answers.
         Focus::Elab(root) => {
             let turns: Vec<&str> = state
                 .thread(root)
                 .into_iter()
                 .map(|r| r.answer.as_deref().unwrap_or(&r.selection).trim())
                 .collect();
-            if turns.is_empty() { Vec::new() } else { vec![(turns.join("\n\n"), Weight::Normal)] }
+            if turns.is_empty() { Vec::new() } else { vec![Part::plain(turns.join("\n\n"), Weight::Normal)] }
         }
         Focus::Section(_) => Vec::new(),
     }
 }
 
 pub fn item_text(state: &State, focus: &Focus) -> String {
-    item_parts(state, focus).into_iter().map(|(s, _)| s).collect()
+    item_parts(state, focus).into_iter().map(|p| p.text).collect()
 }
 
 /// The item an elaboration of `selection` in `focus` should target, and on

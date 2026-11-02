@@ -7,11 +7,12 @@ use std::sync::Arc;
 
 use egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
 use egui::{
-    Align, Button, Color32, Frame, Galley, Label, Layout, RichText, ScrollArea,
+    Align, Button, Color32, FontId, Frame, Galley, Label, Layout, RichText, ScrollArea,
     Sense, Stroke, TextBuffer, TextEdit, TextStyle, Ui,
 };
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 
+use super::cardtext::Part;
 use super::nav::{self, Focus, FocusRequest, MouseSelection, Nav, Section, Weight};
 use crate::store::{Decision, DecisionStatus, Elab, Kind, State, Todo};
 
@@ -308,7 +309,7 @@ impl Board<'_> {
             v.galley = Some(galley);
             return None;
         }
-        let text: String = parts.iter().map(|(s, _)| s.as_str()).collect();
+        let text: String = parts.iter().map(|p| p.text.as_str()).collect();
         let mut buf: &str = &text;
         let mut layouter = |ui: &Ui, _: &dyn TextBuffer, wrap: f32| -> Arc<Galley> {
             let job = styled_job(ui, &parts, None, None, wrap);
@@ -479,31 +480,41 @@ pub fn elab_count(state: &State) -> String {
 /// Lays out `parts` with an optional inclusive selection and block caret.
 fn styled_job(
     ui: &Ui,
-    parts: &[(String, Weight)],
+    parts: &[Part],
     selection: Option<(usize, usize)>,
     caret: Option<usize>,
     wrap: f32,
 ) -> LayoutJob {
     let v = ui.visuals();
     let font = TextStyle::Body.resolve(ui.style());
+    let mono = FontId::monospace(font.size * 0.95);
     let sel_bg = v.selection.bg_fill;
     let caret_bg = v.selection.stroke.color;
     let mut job = LayoutJob::default();
     job.wrap.max_width = wrap;
     let mut idx = 0;
-    for (text, weight) in parts {
-        let color = match weight {
+    for part in parts {
+        let color = match part.weight {
             Weight::Strong => v.strong_text_color(),
             Weight::Normal => v.text_color(),
+            // Code stays readable inside weak context text.
+            Weight::Weak if part.code => v.text_color(),
             Weight::Weak | Weight::Struck => v.weak_text_color(),
         };
-        let strikethrough = match weight {
-            Weight::Struck => Stroke::new(1.0, color),
-            _ => Stroke::NONE,
+        let format = |background: Color32| TextFormat {
+            font_id: if part.code { mono.clone() } else { font.clone() },
+            color,
+            background: if background == Color32::TRANSPARENT && part.code { v.code_bg_color } else { background },
+            italics: part.italic,
+            strikethrough: match part.weight {
+                Weight::Struck => Stroke::new(1.0, color),
+                _ => Stroke::NONE,
+            },
+            ..Default::default()
         };
         let mut run = String::new();
         let mut run_bg = Color32::TRANSPARENT;
-        for ch in text.chars() {
+        for ch in part.text.chars() {
             let bg = if caret == Some(idx) {
                 caret_bg
             } else if selection.is_some_and(|(a, b)| (a..=b).contains(&idx)) {
@@ -512,7 +523,7 @@ fn styled_job(
                 Color32::TRANSPARENT
             };
             if bg != run_bg && !run.is_empty() {
-                job.append(&run, 0.0, TextFormat { font_id: font.clone(), color, background: run_bg, strikethrough, ..Default::default() });
+                job.append(&run, 0.0, format(run_bg));
                 run.clear();
             }
             run_bg = bg;
@@ -520,7 +531,7 @@ fn styled_job(
             idx += 1;
         }
         if !run.is_empty() {
-            job.append(&run, 0.0, TextFormat { font_id: font.clone(), color, background: run_bg, strikethrough, ..Default::default() });
+            job.append(&run, 0.0, format(run_bg));
         }
     }
     job
