@@ -2768,7 +2768,7 @@ dependencies = [
 
 [[package]]
 name = "todai"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2789,7 +2789,7 @@ dependencies = [
 
 [[package]]
 name = "todai-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2799,7 +2799,7 @@ dependencies = [
 
 [[package]]
 name = "todai-server"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
