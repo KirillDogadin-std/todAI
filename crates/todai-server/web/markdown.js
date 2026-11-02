@@ -127,8 +127,14 @@ export function renderMarkdown(src) {
 }
 
 // The text a reader sees, for "ask about the whole item".
+// (innerText would need the nodes to be laid out on the page; without that
+// it runs paragraphs together.)
 export function plainText(src) {
   const div = document.createElement("div");
   div.append(renderMarkdown(src));
-  return div.innerText || div.textContent;
+  div.querySelectorAll("br").forEach((br) => br.replaceWith("\n"));
+  div.querySelectorAll("li").forEach((li) => {
+    if (li.previousElementSibling) li.before("\n");
+  });
+  return [...div.children].map((block) => block.textContent).join("\n\n");
 }
