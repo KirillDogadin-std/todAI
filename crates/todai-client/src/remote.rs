@@ -140,6 +140,29 @@ pub fn local() -> Option<Client> {
     Some(Client::new(&format!("http://{addr}"), &token))
 }
 
+/// The boards on `client`'s server matching `wanted` (a name,
+/// `PROJECT/NAME`, or id each); every board if `wanted` is empty.
+pub fn pick_boards(client: &Client, wanted: &[String]) -> Result<Vec<BoardInfo>> {
+    let server = client.base();
+    let boards = client.boards()?;
+    let mut picked = Vec::new();
+    for w in wanted {
+        let matches = |b: &&BoardInfo| b.id == *w || b.name == *w || format!("{}/{}", b.project, b.name) == *w;
+        match boards.iter().filter(matches).collect::<Vec<_>>()[..] {
+            [b] => picked.push(b.clone()),
+            [] => bail!("{server} has no board {w} (see `todai-server boards` there)"),
+            _ => bail!("{server} has several boards named {w}; use PROJECT/{w} or the id"),
+        }
+    }
+    if wanted.is_empty() {
+        picked = boards;
+    }
+    if picked.is_empty() {
+        bail!("{server} serves no boards yet");
+    }
+    Ok(picked)
+}
+
 /// Best effort: makes `path` reachable through a running local server, so
 /// boards agents attach show up on remote frontends. Never fails the caller.
 pub fn register_local(path: &Path) {

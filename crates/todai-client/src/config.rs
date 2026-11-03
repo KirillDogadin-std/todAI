@@ -20,11 +20,24 @@ pub enum InputMode {
     Mouse,
 }
 
+/// What `todai FILE` / `todai attach` start when no frontend is running.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Frontend {
+    /// The desktop window.
+    #[default]
+    Window,
+    /// Nothing: the operator runs `todai-tui` in a terminal themselves, and
+    /// it picks boards up over the socket while it runs.
+    Tui,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(default)]
 pub struct Config {
     pub theme: Theme,
     pub input: InputMode,
+    pub frontend: Frontend,
 }
 
 impl Config {

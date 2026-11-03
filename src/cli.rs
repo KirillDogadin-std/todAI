@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
-use todai_core::api::BoardInfo;
 
 use crate::{agent, inbox};
 use crate::ipc::{self, Bind, Request};
@@ -319,6 +318,9 @@ fn open(files: Vec<PathBuf>) -> Result<()> {
         }
         return Ok(());
     }
+    if crate::config::Config::load().frontend == crate::config::Frontend::Tui {
+        bail!("no todai frontend is running; start `todai-tui` in a terminal (config.json has \"frontend\": \"tui\")");
+    }
     spawn_window(&socket, &files)
 }
 
@@ -332,23 +334,8 @@ fn open_remote(server: &str, token: Option<&str>, wanted: &[PathBuf]) -> Result<
             .ok_or_else(|| anyhow::anyhow!("no token for {server}: pass --token (run `todai-server token` there)"))?,
     };
     client.check()?;
-    let boards = client.boards()?;
-    let mut picked = Vec::new();
-    for w in wanted {
-        let w = w.to_string_lossy();
-        let matches = |b: &&BoardInfo| b.id == w || b.name == w || format!("{}/{}", b.project, b.name) == w;
-        match boards.iter().filter(matches).collect::<Vec<_>>()[..] {
-            [b] => picked.push(b.clone()),
-            [] => bail!("{server} has no board {w} (see `todai-server boards` there)"),
-            _ => bail!("{server} has several boards named {w}; use PROJECT/{w} or the id"),
-        }
-    }
-    if wanted.is_empty() {
-        picked = boards;
-    }
-    if picked.is_empty() {
-        bail!("{server} serves no boards yet");
-    }
+    let wanted: Vec<String> = wanted.iter().map(|w| w.to_string_lossy().into_owned()).collect();
+    let picked = crate::remote::pick_boards(&client, &wanted)?;
     if let Some(t) = token {
         crate::remote::save_token(server, t)?;
     }

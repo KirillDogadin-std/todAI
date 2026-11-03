@@ -8,6 +8,7 @@ pub mod cardtext;
 pub mod config;
 pub mod ipc;
 pub mod nav;
+pub mod notify;
 pub mod remote;
 pub mod session;
 pub mod tab;
