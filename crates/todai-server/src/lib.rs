@@ -111,7 +111,7 @@ pub fn run(args: Args) -> Result<()> {
 /// `$XDG_STATE_HOME/todai/server`: token, registered boards, and the address
 /// of the running server (for `todai attach` to register with).
 pub fn state_dir() -> Result<PathBuf> {
-    Ok(todai_core::dirs::state_dir().context("no state dir: set XDG_STATE_HOME or HOME")?.join("server"))
+    todai_core::dirs::server_dir().context("no state dir: set XDG_STATE_HOME or HOME")
 }
 
 pub struct Config {
@@ -222,9 +222,7 @@ fn pair(dir: &Path, host: Option<&str>) -> Result<()> {
 }
 
 pub fn local(dir: &Path) -> Option<(SocketAddr, String)> {
-    let addr = std::fs::read_to_string(dir.join("addr")).ok()?.trim().parse().ok()?;
-    let token = std::fs::read_to_string(dir.join("token")).ok()?.trim().to_owned();
-    Some((addr, token))
+    todai_core::dirs::local_server(dir)
 }
 
 #[cfg(test)]

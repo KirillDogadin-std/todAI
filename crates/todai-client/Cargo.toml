@@ -1,0 +1,20 @@
+[package]
+name = "todai-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "todai's frontend logic shared by the window and the TUI: tabs, keyboard navigation, server client; no GUI"
+
+[dependencies]
+anyhow.workspace = true
+notify = "8.2.0"
+pulldown-cmark = { version = "0.13", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+todai-core.workspace = true
+libc = "0.2.191"
+ureq = { version = "3.5.0", default-features = false, features = ["json"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+todai-server.workspace = true

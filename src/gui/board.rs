@@ -12,8 +12,8 @@ use egui::{
 };
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 
-use super::cardtext::Part;
-use super::nav::{self, Focus, FocusRequest, MouseSelection, Nav, Section, Weight};
+use todai_client::cardtext::Part;
+use todai_client::nav::{self, Focus, FocusRequest, MouseSelection, Nav, Section, Weight};
 use crate::store::{Decision, DecisionStatus, Elab, Kind, State, Todo};
 
 pub struct Board<'a> {
@@ -306,7 +306,7 @@ impl Board<'_> {
             let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
             let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
             ui.painter().galley(rect.min, galley.clone(), Color32::PLACEHOLDER);
-            v.galley = Some(galley);
+            v.rows = Some(Box::new(super::input::GalleyRows(galley)));
             return None;
         }
         let text: String = parts.iter().map(|p| p.text.as_str()).collect();
@@ -325,7 +325,7 @@ impl Board<'_> {
             .show(ui);
         let resp = &out.response.response;
         #[cfg(test)]
-        self.nav.text_rects.push((focus.clone(), resp.rect));
+        super::input::text_rects::push(ui.ctx(), focus.clone(), resp.rect);
 
         let mine = self.nav.mouse_selection.as_ref().filter(|m| &m.focus == focus);
         if let Some(m) = mine

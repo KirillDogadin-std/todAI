@@ -2782,11 +2782,25 @@ dependencies = [
  "egui",
  "egui_commonmark",
  "libc",
+ "serde",
+ "serde_json",
+ "skrifa",
+ "tempfile",
+ "todai-client",
+ "todai-core",
+ "todai-server",
+]
+
+[[package]]
+name = "todai-client"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "libc",
  "notify",
  "pulldown-cmark",
  "serde",
  "serde_json",
- "skrifa",
  "tempfile",
  "todai-core",
  "todai-server",

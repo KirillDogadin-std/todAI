@@ -5,7 +5,9 @@ for the operator, plus an optional headless HTTP server for answering from
 other machines. Start with `README.md`, then `docs/architecture.md`.
 
 Workspace: `crates/todai-core` (log, inbox, API types), `crates/todai-server`
-(`todai-server`), and the root crate (`todai`: CLI + window).
+(`todai-server`), `crates/todai-client` (frontend logic shared by the window
+and the TUI: tabs, keyboard navigation, socket), and the root crate (`todai`:
+CLI + window).
 
 This file is the agent-agnostic `AGENTS.md`. For Claude Code, make a local,
 gitignored symlink: `ln -s AGENTS.md CLAUDE.md`.
@@ -51,8 +53,8 @@ test-only code must be warning-free too: check with
   and exits 0.
 - **All writes go through `Log::append`** (flock + validate + append). Never
   rewrite a board file. The server is no exception.
-- **`todai-core` and `todai-server` stay GUI-free.** CI fails if
-  `cargo tree -p todai-server` shows egui/eframe.
+- **`todai-core`, `todai-server` and `todai-client` stay GUI-free.** CI
+  fails if `cargo tree` for the server or the client shows egui/eframe.
 - **The server takes operator actions only.** Agents write board files
   directly; don't route them through HTTP without an explicit decision.
 - **The HTTP API is documented in `docs/server.md`** and its wire types are in
@@ -64,8 +66,8 @@ test-only code must be warning-free too: check with
   `textContent` (`markdown.js` builds nodes); never use `innerHTML` for it.
   The page's CSP forbids inline and third-party scripts; keep it that way.
 - **Keys are documented in three places**: `CHEATSHEET` in `src/gui/mod.rs`,
-  `docs/keyboard.md`, and the behavior in `src/gui/nav.rs`. Change them
-  together.
+  `docs/keyboard.md`, and the behavior in `crates/todai-client/src/nav.rs`.
+  Change them together.
 
 ## egui 0.35 specifics
 

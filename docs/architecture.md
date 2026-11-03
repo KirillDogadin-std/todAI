@@ -25,10 +25,11 @@ remote frontends use instead of the file.
 |---|---|---|
 | `crates/todai-core` | serde | the event log, inbox text, API wire types, XDG paths; no GUI, no network |
 | `crates/todai-server` | core, tiny_http | the HTTP server, as a library and the `todai-server` binary; no GUI |
-| `todai` (repo root) | core, server, egui, ureq | the CLI, the window, agent integration; `todai serve` embeds the server |
+| `crates/todai-client` | core, notify, ureq | what every frontend shares: open boards, keyboard navigation, card text, the server client, the window socket, config and session; no GUI |
+| `todai` (repo root) | core, client, server, egui | the CLI, the window, agent integration; `todai serve` embeds the server |
 
-Keep the arrows pointing this way: core and server must build without egui
-(CI checks), so a headless install never pulls in GL.
+Keep the arrows pointing this way: core, server and client must build
+without egui (CI checks), so a headless install never pulls in GL.
 
 ## Modules
 
@@ -39,11 +40,13 @@ Keep the arrows pointing this way: core and server must build without egui
 | `crates/todai-core/src/api.rs` | the HTTP API's wire types and board ids |
 | `crates/todai-server/src/` | `lib.rs` (args, bind, run), `http.rs` (routes, auth, long-poll), `registry.rs` (token, registered boards, address file) |
 | `src/cli.rs` | every subcommand; also starting the window (`open`, `spawn_window`, `gui_main`) and opening remote boards (`open_remote`) |
-| `src/remote.rs` | HTTP client for the server; saved tokens; registering boards with a local server |
-| `src/gui/` | the window: `mod.rs` (app, tabs, panels, dialogs, cheatsheet), `board.rs` (rendering), `nav.rs` (keyboard state machine), `textnav.rs` (vim motions), `tab.rs` (one open board and its source: file watcher or server long-poll) |
-| `src/ipc.rs` | single-instance socket: bind / take over a stale socket, request and reply |
-| `src/session.rs` | open tabs (files and remote boards), restored at startup |
-| `src/config.rs` | theme and input mode |
+| `crates/todai-client/src/nav.rs` | the keyboard state machine, on its own `Input` type; frontends translate their events into it |
+| `crates/todai-client/src/tab.rs` | one open board and its source (file watcher or server long-poll); wakes the frontend through a callback |
+| `crates/todai-client/src/cardtext.rs`, `textnav.rs` | card markdown as styled runs; vim motions over text |
+| `crates/todai-client/src/remote.rs` | HTTP client for the server; saved tokens; registering boards with a local server |
+| `crates/todai-client/src/ipc.rs` | single-instance socket: bind / take over a stale socket, request and reply |
+| `crates/todai-client/src/session.rs`, `config.rs` | open tabs (one file per frontend), restored at startup; theme and input mode |
+| `src/gui/` | the window: `mod.rs` (app, tabs, panels, dialogs, cheatsheet), `board.rs` (rendering), `input.rs` (egui events → `nav::Input`) |
 | `src/agent/` | what agents see: `guide.md` (the protocol), the skill, `claude.rs` (hooks), `pi-extension.ts`, `setup.rs` (install / remove) |
 
 ## Board state

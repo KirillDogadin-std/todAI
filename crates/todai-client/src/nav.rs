@@ -1,17 +1,67 @@
-//! Keyboard navigation: a vim-like modal state machine over the board.
+//! Keyboard navigation: a vim-like modal state machine over the board,
+//! shared by the window and the TUI.
 //!
-//! Each frame, `handle` consumes key events using the focus lists recorded by
-//! the previous frame's render; the board then re-records them. Mouse works in
-//! every mode; `vim == false` only turns off the single-key commands.
+//! Each frame, the frontend feeds its key events to `input` (translated into
+//! `Input`) using the focus lists recorded by the previous frame's render;
+//! the board then re-records them. Mouse works in every mode; `vim == false`
+//! only turns off the single-key commands.
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
 
-use egui::{Event, Galley, Key, Modifiers};
-
-use super::cardtext::{self, Part};
-use super::textnav as tn;
+use crate::cardtext::{self, Part};
 use crate::store::{DecisionStatus, Kind, State};
+use crate::textnav as tn;
+
+/// A key, as far as navigation cares. Letters are lowercase; with Ctrl they
+/// arrive as `Key::Letter`, typed text as `Input::Text`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Key {
+    Up,
+    Down,
+    Left,
+    Right,
+    Enter,
+    Escape,
+    Tab,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    Letter(char),
+    Other,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Mods {
+    pub ctrl: bool,
+    pub shift: bool,
+    pub alt: bool,
+    /// Ctrl, or Cmd on macOS: the platform's shortcut modifier.
+    pub command: bool,
+}
+
+/// One input event. Frontends send key releases too where they have them,
+/// so navigation can swallow both halves of a keystroke it owns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Input {
+    Text(String),
+    Key { key: Key, pressed: bool, mods: Mods },
+}
+
+/// What the frontend reports about itself when handing over an event.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Env {
+    /// A popup (context menu) is open: `Esc` closes that first.
+    pub popup_open: bool,
+}
+
+/// Wrapped-row layout of the text under visual mode, from the last frame,
+/// so `j` / `k` move by displayed rows. `h` is the remembered horizontal
+/// position, in whatever unit the frontend lays out in.
+pub trait Rows {
+    fn down(&self, caret: usize, h: Option<f32>) -> (usize, Option<f32>);
+    fn up(&self, caret: usize, h: Option<f32>) -> (usize, Option<f32>);
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Focus {
@@ -52,7 +102,7 @@ pub struct Visual {
     pub anchor: Option<usize>,
     h_pos: Option<f32>,
     /// Layout from the last frame, for moving by wrapped rows.
-    pub galley: Option<Arc<Galley>>,
+    pub rows: Option<Box<dyn Rows>>,
 }
 
 impl Visual {
@@ -94,6 +144,9 @@ pub struct Outcome {
     pub close_cheatsheet: bool,
     /// Items to remove from the board, once the operator confirms.
     pub trash: Option<Vec<String>>,
+    /// Typing ended (submit or `Esc`): the frontend drops keyboard focus
+    /// from its text field.
+    pub leave_input: bool,
 }
 
 pub struct Nav {
@@ -129,9 +182,10 @@ pub struct Nav {
     /// Overlay scrolling: requested jump, and the offset it last rendered at.
     pub zoom_scroll_to: Option<f32>,
     pub zoom_offset: f32,
-    /// Where each item's text was drawn last frame (for tests driving the mouse).
-    #[cfg(test)]
-    pub text_rects: Vec<(Focus, egui::Rect)>,
+    /// Overlay scroll steps for a line and a page, in the frontend's unit
+    /// (points in the window, rows in the terminal).
+    pub zoom_line: f32,
+    pub zoom_page: f32,
     pub prefix: Option<char>,
     prev_index: usize,
 }
@@ -159,8 +213,8 @@ impl Default for Nav {
             zoom: None,
             zoom_scroll_to: None,
             zoom_offset: 0.0,
-            #[cfg(test)]
-            text_rects: Vec::new(),
+            zoom_line: 60.0,
+            zoom_page: 400.0,
             prefix: None,
             prev_index: 0,
         }
@@ -258,8 +312,6 @@ impl Nav {
         self.input_focused = None;
         self.prompt_focused = false;
         self.mark_groups.clear();
-        #[cfg(test)]
-        self.text_rects.clear();
     }
 
     /// Call after the board rendered: syncs the mode with widget focus and
@@ -288,54 +340,42 @@ impl Nav {
         self.scroll_to_cursor = false;
     }
 
-    /// Processes this frame's key events and removes the ones it used.
-    pub fn handle(
+    /// Processes one event; returns whether navigation used it (the
+    /// frontend then hides it from its widgets).
+    pub fn input(
         &mut self,
-        ctx: &egui::Context,
+        ev: &Input,
+        env: Env,
         state: &State,
         drafts: &mut HashMap<String, String>,
         vim: bool,
-    ) -> Outcome {
-        let mut out = Outcome::default();
-        let events = ctx.input(|i| i.events.clone());
-        let mut keep = Vec::with_capacity(events.len());
-        for ev in events {
-            // The zoom overlay owns the keyboard while it is open.
-            if self.zoom.is_some() {
-                if !self.on_zoom_event(&ev, state, vim, &mut out) {
-                    keep.push(ev);
-                }
-                continue;
-            }
-            let grabs_keys = vim && matches!(self.mode, Mode::Normal | Mode::Visual);
-            let used = match &ev {
-                Event::Text(t) if grabs_keys => {
-                    for c in t.chars() {
-                        self.on_char(c, state, drafts, &mut out);
-                    }
-                    true
-                }
-                Event::Key { key, pressed: true, modifiers, .. } => {
-                    self.on_key(ctx, *key, *modifiers, state, drafts, vim, &mut out)
-                }
-                // Swallow releases of keys we own so no widget sees half a keystroke.
-                Event::Key { key, modifiers, .. } => grabs_keys && !modifiers.command && *key != Key::Tab,
-                _ => false,
-            };
-            if !used {
-                keep.push(ev);
-            }
+        out: &mut Outcome,
+    ) -> bool {
+        // The zoom overlay owns the keyboard while it is open.
+        if self.zoom.is_some() {
+            return self.on_zoom_event(ev, state, vim, out);
         }
-        ctx.input_mut(|i| i.events = keep);
-        out
+        let grabs_keys = vim && matches!(self.mode, Mode::Normal | Mode::Visual);
+        match ev {
+            Input::Text(t) if grabs_keys => {
+                for c in t.chars() {
+                    self.on_char(c, state, drafts, out);
+                }
+                true
+            }
+            Input::Text(_) => false,
+            Input::Key { key, pressed: true, mods } => self.on_key(env, *key, *mods, state, drafts, vim, out),
+            // Swallow releases of keys we own so no widget sees half a keystroke.
+            Input::Key { key, mods, .. } => grabs_keys && !mods.command && *key != Key::Tab,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn on_key(
         &mut self,
-        ctx: &egui::Context,
+        env: Env,
         key: Key,
-        m: Modifiers,
+        m: Mods,
         state: &State,
         drafts: &mut HashMap<String, String>,
         vim: bool,
@@ -355,9 +395,9 @@ impl Nav {
                     return true;
                 }
                 // Esc closes an open context menu first; egui handles that.
-                Key::Escape if !egui::Popup::is_any_open(ctx) => {
+                Key::Escape if !env.popup_open => {
                     self.mouse_selection = None;
-                    self.leave_input(ctx);
+                    self.leave_input(out);
                     return true;
                 }
                 _ => {}
@@ -366,7 +406,7 @@ impl Nav {
         if self.mode == Mode::Normal
             && key == Key::Escape
             && !self.marked.is_empty()
-            && !egui::Popup::is_any_open(ctx)
+            && !env.popup_open
         {
             self.marked.clear();
             return true;
@@ -377,11 +417,11 @@ impl Nav {
                     if self.mode == Mode::Prompt {
                         self.prompt = None;
                     }
-                    self.leave_input(ctx);
+                    self.leave_input(out);
                     true
                 }
-                Key::Enter if !m.shift && !m.command => {
-                    self.submit(ctx, state, drafts, out);
+                Key::Enter if !m.shift && !m.command && !m.alt => {
+                    self.submit(state, drafts, out);
                     true
                 }
                 _ => false,
@@ -389,11 +429,11 @@ impl Nav {
             Mode::Normal | Mode::Visual if vim => {
                 if m.command {
                     return match key {
-                        Key::D if m.ctrl => {
+                        Key::Letter('d') if m.ctrl => {
                             self.step(5);
                             true
                         }
-                        Key::U if m.ctrl => {
+                        Key::Letter('u') if m.ctrl => {
                             self.step(-5);
                             true
                         }
@@ -401,10 +441,10 @@ impl Nav {
                     };
                 }
                 let c = match key {
-                    Key::ArrowDown => Some('j'),
-                    Key::ArrowUp => Some('k'),
-                    Key::ArrowLeft => Some('h'),
-                    Key::ArrowRight => Some('l'),
+                    Key::Down => Some('j'),
+                    Key::Up => Some('k'),
+                    Key::Left => Some('h'),
+                    Key::Right => Some('l'),
                     _ => None,
                 };
                 if let Some(c) = c {
@@ -530,16 +570,11 @@ impl Nav {
             (_, 'G') => n - 1,
             (_, 'j' | 'k') => {
                 keep_h = true;
-                match &v.galley {
-                    Some(g) => {
-                        let cur = egui::text::CCursor::new(v.caret);
-                        let (next, h) = if c == 'j' {
-                            g.cursor_down_one_row(&cur, v.h_pos)
-                        } else {
-                            g.cursor_up_one_row(&cur, v.h_pos)
-                        };
+                match &v.rows {
+                    Some(r) => {
+                        let (next, h) = if c == 'j' { r.down(v.caret, v.h_pos) } else { r.up(v.caret, v.h_pos) };
                         v.h_pos = h;
-                        next.index.0.min(n - 1)
+                        next.min(n - 1)
                     }
                     None => v.caret,
                 }
@@ -597,7 +632,7 @@ impl Nav {
             anchor: all.then_some(0),
             text,
             h_pos: None,
-            galley: None,
+            rows: None,
         });
         self.mode = Mode::Visual;
     }
@@ -659,39 +694,38 @@ impl Nav {
 
     /// Keys while zoomed. Returns whether the event was used; every key is,
     /// so nothing leaks to the board underneath.
-    fn on_zoom_event(&mut self, ev: &Event, state: &State, vim: bool, out: &mut Outcome) -> bool {
-        const LINE: f32 = 60.0;
-        const PAGE: f32 = 400.0;
+    fn on_zoom_event(&mut self, ev: &Input, state: &State, vim: bool, out: &mut Outcome) -> bool {
+        let (line, page) = (self.zoom_line, self.zoom_page);
         let scroll = |nav: &mut Nav, by: f32| nav.zoom_scroll_to = Some((nav.zoom_offset + by).max(0.0));
         match ev {
-            Event::Key { key, pressed: true, modifiers, .. } => {
-                if modifiers.command && !modifiers.ctrl {
+            Input::Key { key, pressed: true, mods } => {
+                if mods.command && !mods.ctrl {
                     return false; // leave Cmd/Ctrl shortcuts (tabs, quit) to the app
                 }
                 match key {
                     Key::Escape => self.zoom = None,
-                    Key::ArrowDown => scroll(self, LINE),
-                    Key::ArrowUp => scroll(self, -LINE),
-                    Key::PageDown => scroll(self, PAGE),
-                    Key::PageUp => scroll(self, -PAGE),
-                    Key::D if modifiers.ctrl => scroll(self, PAGE),
-                    Key::U if modifiers.ctrl => scroll(self, -PAGE),
+                    Key::Down => scroll(self, line),
+                    Key::Up => scroll(self, -line),
+                    Key::PageDown => scroll(self, page),
+                    Key::PageUp => scroll(self, -page),
+                    Key::Letter('d') if mods.ctrl => scroll(self, page),
+                    Key::Letter('u') if mods.ctrl => scroll(self, -page),
                     Key::Home => self.zoom_scroll_to = Some(0.0),
                     Key::End => self.zoom_scroll_to = Some(f32::MAX),
-                    _ if modifiers.ctrl => return false,
+                    _ if mods.ctrl => return false,
                     _ => {}
                 }
                 true
             }
-            Event::Key { modifiers, .. } => !modifiers.ctrl,
-            Event::Text(t) if vim => {
+            Input::Key { mods, .. } => !mods.ctrl,
+            Input::Text(t) if vim => {
                 for c in t.chars() {
                     match (self.prefix.take(), c) {
                         (Some('g'), 'g') => self.zoom_scroll_to = Some(0.0),
                         (_, 'g') => self.prefix = Some('g'),
                         (_, 'G') => self.zoom_scroll_to = Some(f32::MAX),
-                        (_, 'j') => scroll(self, LINE),
-                        (_, 'k') => scroll(self, -LINE),
+                        (_, 'j') => scroll(self, line),
+                        (_, 'k') => scroll(self, -line),
                         (_, 'n') => self.zoom_step(state, 1),
                         (_, 'p') => self.zoom_step(state, -1),
                         (_, 'q') => self.zoom = None,
@@ -706,8 +740,7 @@ impl Nav {
                 }
                 true
             }
-            Event::Text(_) => true,
-            _ => false,
+            Input::Text(_) => true,
         }
     }
 
@@ -794,7 +827,7 @@ impl Nav {
         }
     }
 
-    fn submit(&mut self, ctx: &egui::Context, state: &State, drafts: &mut HashMap<String, String>, out: &mut Outcome) {
+    fn submit(&mut self, state: &State, drafts: &mut HashMap<String, String>, out: &mut Outcome) {
         if self.mode == Mode::Prompt {
             if let Some(p) = self.prompt.take() {
                 let note = Some(p.note.trim().to_owned()).filter(|n| !n.is_empty());
@@ -818,15 +851,11 @@ impl Nav {
                 out.kinds.push(Kind::TodoDone { id: id.clone(), note: take_draft(drafts, id) });
             }
         }
-        self.leave_input(ctx);
+        self.leave_input(out);
     }
 
-    fn leave_input(&mut self, ctx: &egui::Context) {
-        ctx.memory_mut(|m| {
-            if let Some(id) = m.focused() {
-                m.surrender_focus(id);
-            }
-        });
+    fn leave_input(&mut self, out: &mut Outcome) {
+        out.leave_input = true;
         self.mode = Mode::Normal;
     }
 

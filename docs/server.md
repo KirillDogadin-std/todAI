@@ -170,7 +170,7 @@ view's `last_seq`), then loop on
 changes, or with an empty list when the wait (at most 60 s) runs out. If
 `reset` is `true`, the file was replaced: drop what you have and fold the
 returned events from scratch. The desktop window does exactly this
-(`src/gui/tab.rs`).
+(`crates/todai-client/src/tab.rs`).
 
 ### Posting actions
 

@@ -5,7 +5,7 @@ use egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Rect, vec2};
 use egui_commonmark::CommonMarkCache;
 
 use super::nav::{Focus, Mode, MouseSelection, Section};
-use super::tab::Tab;
+use todai_client::tab::Tab;
 use super::draw_tab;
 use crate::store::{Actor, DecisionStatus, Kind, Log, State};
 
@@ -32,7 +32,7 @@ impl Harness {
         agent(Kind::DecisionAdd { id: "d2".into(), title: "Name it?".into(), context: None, options: vec![] });
         agent(Kind::TodoAdd { id: "t1".into(), title: "Push repo".into(), context: None });
         let ctx = egui::Context::default();
-        let tab = Tab::open(log.path().to_owned(), &ctx);
+        let tab = Tab::open(log.path().to_owned(), super::input::wake(&ctx));
         let mut h = Harness { ctx, tab, md: CommonMarkCache::default(), log, vim: true, _dir: dir };
         h.frame(vec![]);
         h.frame(vec![]);
@@ -51,7 +51,7 @@ impl Harness {
             tab.reload_if_dirty();
             // Multi-pass frames re-run this closure; keys must apply once.
             let kinds = if std::mem::take(&mut events_once) {
-                let o = tab.nav.handle(ui.ctx(), &tab.state, &mut tab.drafts, vim);
+                let o = super::input::handle(ui.ctx(), tab, vim);
                 // As App::ui does: a trash request waits for confirmation.
                 if o.trash.is_some() {
                     tab.confirm_trash = o.trash;
@@ -265,7 +265,7 @@ fn mouse_drag_select_then_enter() {
     for vim in [true, false] {
         let mut h = Harness::new();
         h.vim = vim;
-        let rect = h.tab.nav.text_rects.iter().find(|(f, _)| *f == item("d1")).unwrap().1;
+        let rect = super::input::text_rects::get(&h.ctx, &item("d1")).unwrap();
         let start = rect.left_center() + vec2(1.0, 0.0);
         let end = rect.left_center() + vec2(25.0, 0.0);
         let button = |pos, pressed| Event::PointerButton {
@@ -547,7 +547,7 @@ fn default_fonts_have_glyphs_we_use() {
     let font = egui::FontId::proportional(14.0);
     // Every symbol drawn outside plain text. Many arrows and checkmarks
     // (→ ✓ ✔ ▶) are NOT in egui's default fonts and render as boxes.
-    let src = [include_str!("mod.rs"), include_str!("board.rs"), include_str!("cardtext.rs")].concat();
+    let src = [include_str!("mod.rs"), include_str!("board.rs"), include_str!("../../crates/todai-client/src/cardtext.rs")].concat();
     // 💀 is only in the window title and notifications, which the compositor
     // and notification daemon draw with system fonts; egui can't draw it.
     let used: String = src.chars().filter(|c| !c.is_ascii() && *c != '💀').collect();

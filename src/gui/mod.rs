@@ -1,8 +1,5 @@
 mod board;
-mod cardtext;
-mod nav;
-mod tab;
-mod textnav;
+mod input;
 
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
@@ -17,9 +14,12 @@ use crate::ipc::{self, Incoming, Reply, Request};
 use crate::session::Session;
 use crate::store::{DecisionStatus, Kind};
 use board::Board;
-use nav::{FocusRequest, Mode};
-use tab::Tab;
-pub use tab::Location;
+use todai_client::nav::{self, FocusRequest, Mode};
+use todai_client::tab::Tab;
+pub use todai_client::tab::Location;
+
+/// The window's open tabs, in the state dir (the TUI keeps its own).
+const SESSION: &str = "session.json";
 
 /// Width, in body-text characters, at which elaborations move into their own column.
 const SPLIT_CHARS: f32 = 120.0;
@@ -151,7 +151,7 @@ impl App {
         let ctx = cc.egui_ctx.clone();
         ipc::serve(listener, tx, move || ctx.request_repaint());
 
-        let saved = Session::load();
+        let saved = Session::load(SESSION);
         let mut app = App {
             tabs: Vec::new(),
             active: 0,
@@ -182,9 +182,9 @@ impl App {
             return;
         }
         let tab = match &loc {
-            Location::File(p) => Tab::open(p.clone(), ctx),
+            Location::File(p) => Tab::open(p.clone(), input::wake(ctx)),
             Location::Remote { server, .. } => match crate::remote::client_for(server) {
-                Some(client) => Tab::remote(loc.clone(), client, ctx),
+                Some(client) => Tab::remote(loc.clone(), client, input::wake(ctx)),
                 None => {
                     // Without a token the tab can't load; keep it so the
                     // session remembers it, and say why it is empty.
@@ -255,7 +255,7 @@ impl App {
     fn save_session(&mut self) {
         let now = Session { tabs: self.tabs.iter().map(|t| t.location.clone()).collect(), active: self.active };
         if now != self.saved {
-            if let Err(e) = now.save()
+            if let Err(e) = now.save(SESSION)
                 && let Some(t) = self.tabs.get_mut(self.active)
             {
                 t.error = Some(format!("saving session: {e:#}"));
@@ -522,7 +522,7 @@ impl eframe::App for App {
         let dialog = self.quit_dialog(&ctx) || self.trash_dialog(&ctx);
         let mut outcome = None;
         if !dialog && let Some(tab) = self.tabs.get_mut(self.active) {
-            outcome = Some(tab.nav.handle(&ctx, &tab.state, &mut tab.drafts, vim));
+            outcome = Some(input::handle(&ctx, tab, vim));
         }
         if let Some(o) = &outcome {
             if o.toggle_cheatsheet {
@@ -559,6 +559,8 @@ impl eframe::App for App {
 /// plus whatever the widgets produced.
 fn draw_tab(ui: &mut egui::Ui, tab: &mut Tab, md: &mut CommonMarkCache, vim: bool, mut actions: Vec<Kind>) {
     tab.nav.begin_render();
+    #[cfg(test)]
+    input::text_rects::clear(ui.ctx());
     status_bar(ui, tab, vim);
     prompt_panel(ui, tab, &mut actions);
     action_bar(ui, tab);

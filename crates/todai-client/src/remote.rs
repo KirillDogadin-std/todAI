@@ -136,7 +136,7 @@ pub fn client_for(server: &str) -> Option<Client> {
 
 /// The local server's client, if one has run with this state dir.
 pub fn local() -> Option<Client> {
-    let (addr, token) = todai_server::local(&todai_server::state_dir().ok()?)?;
+    let (addr, token) = todai_core::dirs::local_server(&todai_core::dirs::server_dir()?)?;
     Some(Client::new(&format!("http://{addr}"), &token))
 }
 

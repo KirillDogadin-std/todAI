@@ -1,7 +1,7 @@
 [workspace]
-members = ["crates/todai-core", "crates/todai-server"]
+members = ["crates/todai-core", "crates/todai-server", "crates/todai-client"]
 # `cargo build` / `cargo test` at the root cover every crate.
-default-members = [".", "crates/todai-core", "crates/todai-server"]
+default-members = [".", "crates/todai-core", "crates/todai-server", "crates/todai-client"]
 
 [workspace.package]
 version = "0.5.0"
@@ -14,6 +14,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 tempfile = "3.27.0"
+todai-client = { path = "crates/todai-client" }
 todai-core = { path = "crates/todai-core" }
 todai-server = { path = "crates/todai-server" }
 
@@ -32,16 +33,13 @@ eframe = { version = "0.35.0", default-features = false, features = ["glow", "wa
 egui = { version = "0.35", default-features = false }
 egui_commonmark = { version = "0.24.0", default-features = false, features = ["pulldown_cmark"] }
 libc = "0.2.191"
-notify = "8.2.0"
-# Already in the tree via egui_commonmark; renders card text (src/gui/cardtext.rs).
-pulldown-cmark = { version = "0.13", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 # Already in the tree via epaint; used to check a system font parses before egui panics on it.
 skrifa = { version = "0.42.1", default-features = false, features = ["std"] }
+todai-client.workspace = true
 todai-core.workspace = true
 todai-server.workspace = true
-ureq = { version = "3.5.0", default-features = false, features = ["json"] }
 
 [dev-dependencies]
 tempfile.workspace = true

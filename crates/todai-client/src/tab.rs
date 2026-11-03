@@ -8,9 +8,14 @@ use anyhow::Result;
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 
-use super::nav::Nav;
+use crate::nav::Nav;
 use crate::remote::Client;
 use crate::store::{Actor, Event, Kind, Log, State};
+
+/// Called from watcher and network threads when a tab has something new,
+/// so the frontend redraws (the window requests a repaint, the TUI wakes its
+/// event loop).
+pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
 /// Where a tab's board lives. Saved in the session; a bare string is a file,
 /// which keeps sessions from before remote tabs readable.
@@ -80,10 +85,10 @@ enum Source {
 }
 
 impl Tab {
-    pub fn open(path: PathBuf, ctx: &egui::Context) -> Tab {
+    pub fn open(path: PathBuf, wake: Wake) -> Tab {
         let dirty = Arc::new(AtomicBool::new(true));
         let mut error = None;
-        let watcher = watch(&path, dirty.clone(), ctx.clone())
+        let watcher = watch(&path, dirty.clone(), wake)
             .inspect_err(|e| error = Some(format!("not watching for changes: {e}")))
             .ok();
         let source = Source::File { log: Log::new(path.clone()), dirty, _watcher: watcher };
@@ -91,9 +96,9 @@ impl Tab {
     }
 
     /// A board on a server; `location` must be `Location::Remote`.
-    pub fn remote(location: Location, client: Client, ctx: &egui::Context) -> Tab {
+    pub fn remote(location: Location, client: Client, wake: Wake) -> Tab {
         let Location::Remote { board, .. } = &location else { panic!("not a remote location") };
-        let source = Source::Remote(Remote::start(client, board.clone(), ctx.clone()));
+        let source = Source::Remote(Remote::start(client, board.clone(), wake));
         Tab::new(location, source)
     }
 
@@ -126,8 +131,8 @@ impl Tab {
         }
     }
 
-    /// Reloads regardless of the watcher, for tests.
-    #[cfg(test)]
+    /// Reloads regardless of the watcher (tests, and frontends that know
+    /// the file changed).
     pub fn reload_if_dirty_now(&mut self) {
         if let Source::File { dirty, .. } = &self.source {
             dirty.store(true, Ordering::Relaxed);
@@ -225,13 +230,13 @@ struct Inbox {
 }
 
 impl Remote {
-    fn start(client: Client, board: String, ctx: egui::Context) -> Remote {
+    fn start(client: Client, board: String, wake: Wake) -> Remote {
         let inbox = Arc::new(Mutex::new(Inbox::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let (actions, rx) = mpsc::channel::<Kind>();
 
-        let (c, b, i, s, cx) = (client.clone(), board.clone(), inbox.clone(), stop.clone(), ctx.clone());
-        std::thread::spawn(move || poll_loop(&c, &b, &i, &s, &cx));
+        let (c, b, i, s, w) = (client.clone(), board.clone(), inbox.clone(), stop.clone(), wake.clone());
+        std::thread::spawn(move || poll_loop(&c, &b, &i, &s, &*w));
         let shared = inbox.clone();
         std::thread::spawn(move || {
             let inbox = shared;
@@ -246,7 +251,8 @@ impl Remote {
                     inbox.send_error = None;
                 }
                 inbox.dirty = true;
-                ctx.request_repaint();
+                drop(inbox);
+                wake();
             }
         });
         Remote { events: Vec::new(), inbox, actions, stop }
@@ -286,7 +292,7 @@ impl Drop for Remote {
     }
 }
 
-fn poll_loop(client: &Client, board: &str, inbox: &Mutex<Inbox>, stop: &AtomicBool, ctx: &egui::Context) {
+fn poll_loop(client: &Client, board: &str, inbox: &Mutex<Inbox>, stop: &AtomicBool, wake: &(dyn Fn() + Send + Sync)) {
     let mut after = 0;
     // The first request, and the first after a failure, return at once, so
     // the tab fills (or its error clears) without waiting for a change.
@@ -314,12 +320,12 @@ fn poll_loop(client: &Client, board: &str, inbox: &Mutex<Inbox>, stop: &AtomicBo
                 i.poll_error = Some(format!("{e:#} (retrying)"));
                 i.dirty = true;
                 drop(i);
-                ctx.request_repaint();
+                wake();
                 std::thread::sleep(RETRY);
                 continue;
             }
         }
-        ctx.request_repaint();
+        wake();
     }
 }
 
@@ -346,7 +352,7 @@ pub fn agent_posts(events: &[Event], seen: u64) -> Vec<String> {
         .collect()
 }
 
-fn watch(path: &Path, dirty: Arc<AtomicBool>, ctx: egui::Context) -> Result<notify::RecommendedWatcher> {
+fn watch(path: &Path, dirty: Arc<AtomicBool>, wake: Wake) -> Result<notify::RecommendedWatcher> {
     // Watch the directory, not the file: the file may not exist yet, and some
     // writers replace it instead of appending. Access events (open, read,
     // close without writing) are skipped: our own reload opens the file, and
@@ -360,7 +366,7 @@ fn watch(path: &Path, dirty: Arc<AtomicBool>, ctx: egui::Context) -> Result<noti
             && ev.paths.iter().any(|p| p == &target)
         {
             dirty.store(true, Ordering::Relaxed);
-            ctx.request_repaint();
+            wake();
         }
     })?;
     w.watch(&dir, RecursiveMode::NonRecursive)?;
@@ -379,7 +385,7 @@ mod tests {
         Log::new(path.clone())
             .append(Actor::Agent, |_| Ok(Kind::TodoAdd { id: "t1".into(), title: "x".into(), context: None }))
             .unwrap();
-        let mut tab = Tab::open(path.clone(), &egui::Context::default());
+        let mut tab = Tab::open(path.clone(), Arc::new(|| {}));
         tab.reload_if_dirty();
         std::thread::sleep(Duration::from_millis(300));
         let Source::File { dirty, .. } = &tab.source else { unreachable!() };
@@ -425,7 +431,7 @@ mod tests {
         let client = Client::new(&format!("http://{}", server.addr), &server.token);
         let board = todai_core::api::board_id(log.path());
         let loc = Location::Remote { server: client.base().into(), board, name: "b".into() };
-        let mut tab = Tab::remote(loc, client, &egui::Context::default());
+        let mut tab = Tab::remote(loc, client, Arc::new(|| {}));
         assert_eq!(tab.title(), format!("b@{}", server.addr));
 
         reload_until(&mut tab, "the first load", |t| t.state.decisions.len() == 1);
