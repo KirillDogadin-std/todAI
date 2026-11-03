@@ -16,7 +16,8 @@ interrupted.
 - **Plain data:** each board is an append-only JSONL file you can read, grep,
   or commit.
 - **In a terminal too:** `todai-tui` is the same board and keys in a
-  terminal, for SSH sessions and machines without a GL stack.
+  terminal (~3 MB binary, ~9 MB of memory), for SSH sessions and machines
+  without a GL stack.
 - **Answer from elsewhere:** an optional headless server shares boards over
   HTTP with the window on another machine, and serves a web app for your
   phone, paired with a QR code ([docs/server.md](docs/server.md)).
