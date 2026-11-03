@@ -121,3 +121,27 @@ Answer fields, todo notes and the elaboration message:
 - Elaborations collapse to a two-line preview. By default an answer stays
   open while it is the newest one or its item is still pending, and
   unanswered requests are always open; your own expand / collapse wins.
+
+## Terminal (todai-tui)
+
+`todai-tui` uses the same keymap (the code is shared), with these
+differences, because terminals can't send some chords:
+
+| Window | Terminal |
+|---|---|
+| `Ctrl+Tab` · `Ctrl+Shift+Tab` · `Ctrl+1`–`9` | `gt` · `gT` · `Alt+1`–`9` |
+| `Shift+Enter` (newline while typing) | `Alt+Enter` or `Ctrl+J`; `Shift+Enter` where the terminal supports the kitty keyboard protocol |
+| `Ctrl+Q` (quit, asks first) | `Ctrl+Q`, `Ctrl+C`, or `q` in normal mode |
+| `Ctrl+Shift+M` (vim / mouse) | none: always vim keys; the mouse works too |
+| `Ctrl+Shift+L` (theme) | none: the terminal's own colours |
+| `Ctrl +` · `Ctrl -` (zoom) | none: elaborations get their own column at 120 columns |
+
+While typing: `Ctrl+A` / `Ctrl+E` line start / end, `Ctrl+U` delete to line
+start, `Alt+Backspace` delete a word. Pasting works as one insertion.
+
+Mouse: the wheel scrolls the column under it (or the zoom overlay); a click
+puts the cursor on a card, toggles a section header, picks an option (and
+starts typing), ticks a checkbox (shift-click for a range), or folds an
+elaboration (click its id). Clicking the cursor card again starts typing
+its answer. Text selection for elaborating is `v` only; hold `Shift` to
+select with your terminal as usual.

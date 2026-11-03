@@ -15,6 +15,8 @@ interrupted.
   or anything with a shell. Nothing is installed or active until you ask.
 - **Plain data:** each board is an append-only JSONL file you can read, grep,
   or commit.
+- **In a terminal too:** `todai-tui` is the same board and keys in a
+  terminal, for SSH sessions and machines without a GL stack.
 - **Answer from elsewhere:** an optional headless server shares boards over
   HTTP with the window on another machine, and serves a web app for your
   phone, paired with a QR code ([docs/server.md](docs/server.md)).
@@ -27,6 +29,7 @@ from [Releases](../../releases), then
 ```sh
 tar xzf todai-*-x86_64-linux-gnu.tar.gz
 install -m755 todai-*/todai ~/.local/bin/
+install -m755 todai-*/todai-tui ~/.local/bin/   # optional: the terminal board
 ```
 
 **From source** (stable Rust; the repo pins `stable`):
@@ -34,6 +37,7 @@ install -m755 todai-*/todai ~/.local/bin/
 ```sh
 git clone https://github.com/KirillDogadin-std/todAI && cd todAI
 cargo install --path .
+cargo install --path crates/todai-tui   # optional: the terminal board
 ```
 
 Runs on Wayland and X11. It needs a GL driver at runtime, plus `notify-send`
@@ -79,6 +83,12 @@ examples/demo.sh        # a populated demo board to play with
 | Change your mind | **Reopen** a decision or **Undo** a todo in *Done* |
 | Clean up | select finished items or elaborations (checkbox, shift-click for a range, or `space`), then **🗑 Delete** in the action bar (or `d`) |
 
+Prefer a terminal? Run `todai-tui` instead of the window: same board, same
+keys ([differences](docs/keyboard.md#terminal-todai-tui)). While it runs,
+boards your agents attach open as tabs in it (unless the window is already
+running). To make `todai attach` never start the window, set
+`"frontend": "tui"` in `~/.config/todai/config.json`.
+
 When the window isn't focused, new posts from the agent show up as a desktop
 notification. The window shows *Pending* and *Done* as collapsible sections; elaborations
 get their own column when the window is wide enough. `?` shows every key.
@@ -96,6 +106,7 @@ Screenshots show `examples/demo.sh`.
 |---|---|
 | `todai open [FILE...]` | open boards in the window (`--foreground` to run attached) |
 | `todai tabs` | list open tabs |
+| `todai-tui [FILE...]` | the board in a terminal; `--server URL [--token T] [BOARD...]` for a server's boards |
 | `todai open --server URL [--token T] [BOARD...]` | open boards from a todai server |
 | `todai serve` / `todai-server` | serve boards over HTTP ([docs/server.md](docs/server.md)) |
 | `todai setup` | install agent integrations (`--agent`, `--scope`, `--dry-run`, `--remove`) |
@@ -115,7 +126,7 @@ Screenshots show `examples/demo.sh`.
 |---|---|
 | `.agents/todai/NAME.jsonl` | a board (one per workflow); gitignore it or commit it as a decision record |
 | `.agents/skills/todai/` | the skill, if installed for the project (linked from `.claude/skills/todai` for Claude Code) |
-| `~/.config/todai/config.json` | theme and input mode |
+| `~/.config/todai/config.json` | theme, input mode, and `frontend` (`window`, or `tui` to never start the window) |
 | `~/.local/state/todai/` | open tabs, setup records, hook state, window log, saved server tokens |
 | `~/.local/state/todai/server/` | the server's token, registered boards and address |
 | `$XDG_RUNTIME_DIR/todai.sock` | the running window's socket |

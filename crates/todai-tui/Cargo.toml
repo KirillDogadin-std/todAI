@@ -1,0 +1,18 @@
+[package]
+name = "todai-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "todai's board in a terminal: answer agents' decisions and todos over SSH or without a GL stack"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+pulldown-cmark = { version = "0.13", default-features = false }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+todai-client.workspace = true
+todai-core.workspace = true
+unicode-width = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true

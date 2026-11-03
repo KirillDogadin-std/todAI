@@ -32,3 +32,7 @@ jobs:
         run: |
           cargo tree --locked -p todai-client -e normal > client-deps.txt
           ! grep -E 'egui|eframe|winit|glow' client-deps.txt
+      - name: todai-tui has no GUI dependencies
+        run: |
+          cargo tree --locked -p todai-tui -e normal > tui-deps.txt
+          ! grep -E 'egui|eframe|winit|glow' tui-deps.txt

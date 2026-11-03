@@ -26,9 +26,10 @@ remote frontends use instead of the file.
 | `crates/todai-core` | serde | the event log, inbox text, API wire types, XDG paths; no GUI, no network |
 | `crates/todai-server` | core, tiny_http | the HTTP server, as a library and the `todai-server` binary; no GUI |
 | `crates/todai-client` | core, notify, ureq | what every frontend shares: open boards, keyboard navigation, card text, the server client, the window socket, config and session; no GUI |
+| `crates/todai-tui` | core, client, ratatui | `todai-tui`: the board in a terminal; no GUI |
 | `todai` (repo root) | core, client, server, egui | the CLI, the window, agent integration; `todai serve` embeds the server |
 
-Keep the arrows pointing this way: core, server and client must build
+Keep the arrows pointing this way: core, server, client and TUI must build
 without egui (CI checks), so a headless install never pulls in GL.
 
 ## Modules
@@ -47,6 +48,7 @@ without egui (CI checks), so a headless install never pulls in GL.
 | `crates/todai-client/src/ipc.rs` | single-instance socket: bind / take over a stale socket, request and reply |
 | `crates/todai-client/src/session.rs`, `config.rs` | open tabs (one file per frontend), restored at startup; theme and input mode |
 | `src/gui/` | the window: `mod.rs` (app, tabs, panels, dialogs, cheatsheet), `board.rs` (rendering), `input.rs` (egui events → `nav::Input`) |
+| `crates/todai-tui/src/` | the terminal board: `app.rs` (tabs, socket, key routing), `ui.rs` (frame, overlays, cheatsheet), `board.rs` (cards as lines), `markdown.rs`, `text.rs` (wrapping), `edit.rs` (the field being typed into) |
 | `src/agent/` | what agents see: `guide.md` (the protocol), the skill, `claude.rs` (hooks), `pi-extension.ts`, `setup.rs` (install / remove) |
 
 ## Board state
@@ -55,6 +57,18 @@ without egui (CI checks), so a headless install never pulls in GL.
 always consistent with the rules in [board-format.md](board-format.md).
 `Log::append` takes a builder closure that runs under the lock with the
 current state, which is how ids and `seq` stay unique across processes.
+
+## The terminal board
+
+`todai-tui` is a second frontend over the same `todai-client`: tabs, `Nav`
+and card text are shared, so keys behave identically. It translates
+crossterm events into `nav::Input`, renders the board into lines (recording
+the same focus lists the window does), and redraws after every event. Tabs
+wake its event loop through the same callback the window uses for repaints.
+It serves the window socket when it is free, so `todai attach` opens boards
+in it, and keeps its own session file (`tui-session.json`). With
+`"frontend": "tui"` in the config, `todai FILE` / `attach` never start the
+window when nothing answers.
 
 ## The window
 
@@ -96,6 +110,8 @@ current state, which is how ids and `seq` stay unique across processes.
 - Window tests (`src/gui/tests.rs`) run the real board code headlessly with
   `egui::Context::run_ui`, feeding synthetic key and pointer events and
   checking what lands in the board file.
+- TUI tests (`crates/todai-tui/src/tests.rs`) do the same with crossterm
+  events and ratatui's `TestBackend`, checking the board file and the screen.
 - Not covered automatically: real Claude Code and pi sessions, and how the
   window looks. `examples/demo.sh` builds a populated board for manual checks.
 

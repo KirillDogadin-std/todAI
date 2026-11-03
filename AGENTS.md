@@ -6,8 +6,9 @@ other machines. Start with `README.md`, then `docs/architecture.md`.
 
 Workspace: `crates/todai-core` (log, inbox, API types), `crates/todai-server`
 (`todai-server`), `crates/todai-client` (frontend logic shared by the window
-and the TUI: tabs, keyboard navigation, socket), and the root crate (`todai`:
-CLI + window).
+and the TUI: tabs, keyboard navigation, socket), `crates/todai-tui`
+(`todai-tui`, the board in a terminal), and the root crate (`todai`: CLI +
+window).
 
 This file is the agent-agnostic `AGENTS.md`. For Claude Code, make a local,
 gitignored symlink: `ln -s AGENTS.md CLAUDE.md`.
@@ -53,8 +54,9 @@ test-only code must be warning-free too: check with
   and exits 0.
 - **All writes go through `Log::append`** (flock + validate + append). Never
   rewrite a board file. The server is no exception.
-- **`todai-core`, `todai-server` and `todai-client` stay GUI-free.** CI
-  fails if `cargo tree` for the server or the client shows egui/eframe.
+- **`todai-core`, `todai-server`, `todai-client` and `todai-tui` stay
+  GUI-free.** CI fails if `cargo tree` for the server, the client or the TUI
+  shows egui/eframe.
 - **The server takes operator actions only.** Agents write board files
   directly; don't route them through HTTP without an explicit decision.
 - **The HTTP API is documented in `docs/server.md`** and its wire types are in
@@ -65,9 +67,11 @@ test-only code must be warning-free too: check with
   embedded with `include_str!`. Board text reaches the DOM only through
   `textContent` (`markdown.js` builds nodes); never use `innerHTML` for it.
   The page's CSP forbids inline and third-party scripts; keep it that way.
-- **Keys are documented in three places**: `CHEATSHEET` in `src/gui/mod.rs`,
-  `docs/keyboard.md`, and the behavior in `crates/todai-client/src/nav.rs`.
-  Change them together.
+- **Keys are documented in four places**: `CHEATSHEET` in `src/gui/mod.rs`
+  and in `crates/todai-tui/src/ui.rs`, `docs/keyboard.md`, and the behavior
+  in `crates/todai-client/src/nav.rs` (shared by both frontends). Change
+  them together. Keys only one frontend has live in `src/gui/mod.rs`
+  (`shortcuts`) or `crates/todai-tui/src/app.rs` (`on_key`).
 
 ## egui 0.35 specifics
 
@@ -82,6 +86,15 @@ The API differs from most examples online:
 - eframe is built without default features (`glow`, `wayland`, `x11`,
   `default_fonts` only) to keep memory low; don't re-enable `wgpu` or
   `accesskit` casually.
+
+## TUI tests
+
+`crates/todai-tui/src/tests.rs` drives the real app with crossterm events,
+renders into ratatui's `TestBackend` after each one (as the event loop
+does), and asserts on the board file, `Nav` state and the screen text. Add a
+test there for TUI-only flows. To look at it for real without touching the
+user's session, run it in tmux with `TODAI_SOCKET` and `XDG_STATE_HOME` set
+to scratch paths.
 
 ## GUI tests
 
