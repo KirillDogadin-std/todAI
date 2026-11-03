@@ -3137,7 +3137,7 @@ dependencies = [
 
 [[package]]
 name = "todai"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3156,7 +3156,7 @@ dependencies = [
 
 [[package]]
 name = "todai-client"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -3172,7 +3172,7 @@ dependencies = [
 
 [[package]]
 name = "todai-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -3182,7 +3182,7 @@ dependencies = [
 
 [[package]]
 name = "todai-server"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3197,7 +3197,7 @@ dependencies = [
 
 [[package]]
 name = "todai-tui"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",

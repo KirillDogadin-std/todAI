@@ -4,7 +4,7 @@ members = ["crates/todai-core", "crates/todai-server", "crates/todai-client", "c
 default-members = [".", "crates/todai-core", "crates/todai-server", "crates/todai-client", "crates/todai-tui"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 license = "Apache-2.0"
 
