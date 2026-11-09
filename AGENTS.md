@@ -33,6 +33,16 @@ CI (`.github/workflows/ci.yml`) builds and tests with `RUSTFLAGS=-D warnings`, s
 test-only code must be warning-free too: check with
 `RUSTFLAGS="-D warnings" cargo test` before committing.
 
+## Releases
+
+Bump `version` in `Cargo.toml` (run `cargo build` so `Cargo.lock` follows),
+commit `Release X.Y.Z`, tag it `git tag -a vX.Y.Z -m "todai X.Y.Z"`, and push
+the branch and the tag. `.github/workflows/release.yml` refuses a tag that
+doesn't match the version, tests, builds in `rust:1.92-bullseye` (glibc 2.30
+floor), and attaches the tarball from `scripts/package.sh` and its `.sha256`
+to a **draft** release. Write the notes on the draft
+(`gh release edit vX.Y.Z --notes-file NOTES.md`), then publish it.
+
 ## Rules that are easy to break
 
 - **Agent integration is agent-agnostic and opt-in.** Never tell users to

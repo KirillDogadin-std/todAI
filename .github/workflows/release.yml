@@ -1,0 +1,58 @@
+name: Release
+
+# Pushing a tag vX.Y.Z builds the release tarball and attaches it to a draft
+# GitHub release. Write the notes on the draft, then publish it.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Debian bullseye: the binaries need glibc 2.30+, not the runner's.
+    container: rust:1.92-bullseye
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches the crate version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 --locked |
+              sed -n 's/.*"name":"todai","version":"\([^"]*\)".*/\1/p')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+              echo "tag $GITHUB_REF_NAME but Cargo.toml says $version" >&2
+              exit 1
+          fi
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - run: scripts/package.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Draft release with the tarball
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag \
+              --title "💀 todai ${GITHUB_REF_NAME#v}" \
+              --notes "Notes to be written before publishing."
