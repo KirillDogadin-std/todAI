@@ -131,6 +131,9 @@ fn run(app: &mut App, tx: mpsc::Sender<Msg>, rx: mpsc::Receiver<Msg>) -> Result<
         loop {
             app.tick();
             terminal.draw(|f| ui::draw(f, app))?;
+            if let Some(text) = app.clipboard.take() {
+                set_clipboard(&text)?;
+            }
             if app.quit {
                 return Ok(());
             }
@@ -177,4 +180,37 @@ fn remote_boards(
         .map(|b| Location::Remote { server: client.base().to_owned(), board: b.id, name: b.name })
         .collect();
     Ok((locations, wanted.is_empty().then_some(client)))
+}
+
+/// Asks the terminal to put `text` on the system clipboard (OSC 52). Works
+/// over SSH; tmux passes it on with `set -g set-clipboard on`. Terminals
+/// that don't support it ignore the sequence.
+fn set_clipboard(text: &str) -> Result<()> {
+    use std::io::Write;
+    let mut out = stdout();
+    write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()))?;
+    out.flush()?;
+    Ok(())
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut s = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, &b)| n | (b as u32) << (16 - 8 * i));
+        for i in 0..4 {
+            s.push(if i <= chunk.len() { ABC[(n >> (18 - 6 * i) & 63) as usize] as char } else { '=' });
+        }
+    }
+    s
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    #[test]
+    fn base64_matches_the_standard_alphabet() {
+        for (plain, enc) in [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("ünï", "w7xuw68=")] {
+            assert_eq!(super::base64(plain.as_bytes()), enc, "{plain}");
+        }
+    }
 }

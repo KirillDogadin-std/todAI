@@ -61,6 +61,8 @@ pub struct App {
     persist: bool,
     wake: Wake,
     pub(crate) follows: Follows,
+    /// Text to put on the terminal's clipboard after the next draw (`y`).
+    pub clipboard: Option<String>,
 }
 
 impl App {
@@ -80,6 +82,7 @@ impl App {
             persist,
             wake,
             follows: Follows::default(),
+            clipboard: None,
         }
     }
 
@@ -362,6 +365,10 @@ impl App {
         }
         if let Some(ids) = out.trash {
             o.tab.confirm_trash = Some(ids);
+        }
+        if let Some(text) = out.copy {
+            self.notice = Some(format!("copied {} characters", text.chars().count()));
+            self.clipboard = Some(text);
         }
         for kind in out.kinds {
             ui::app_send(o, kind);

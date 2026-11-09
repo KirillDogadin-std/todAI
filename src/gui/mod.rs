@@ -65,6 +65,7 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("gg  G", "text start / end"),
             ("v", "set / drop selection anchor"),
             ("o", "swap selection ends"),
+            ("y", "copy selection (whole text if none)"),
             ("Enter", "elaborate on selection (word under caret if none)"),
             ("Esc", "cancel"),
         ],
@@ -545,6 +546,9 @@ impl eframe::App for App {
             }
             if o.close_cheatsheet {
                 self.cheatsheet = false;
+            }
+            if let Some(text) = &o.copy {
+                ctx.copy_text(text.clone());
             }
             if let (Some(ids), Some(tab)) = (&o.trash, self.tabs.get_mut(self.active)) {
                 tab.confirm_trash = Some(ids.clone());

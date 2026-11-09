@@ -48,6 +48,7 @@ like moving the cursor in vim before pressing `v`.
 | `gg` `G` | start / end of the text |
 | `v` | set the selection anchor here (again: drop it) |
 | `o` | swap the selection ends |
+| `y` | copy the selection (the whole text if none) and leave visual mode |
 | `Enter` | elaborate on the selection (on the word under the caret if none) |
 | `Esc` | cancel |
 
@@ -145,3 +146,7 @@ starts typing), ticks a checkbox (shift-click for a range), or folds an
 elaboration (click its id). Clicking the cursor card again starts typing
 its answer. Text selection for elaborating is `v` only; hold `Shift` to
 select with your terminal as usual.
+
+`y` in visual mode copies through the terminal (OSC 52), so it reaches your
+clipboard over SSH too. In tmux, enable it with `set -g set-clipboard on`;
+a terminal without OSC 52 support ignores it.

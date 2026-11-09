@@ -61,6 +61,7 @@ pub const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("gg  G", "text start / end"),
             ("v", "set / drop selection anchor"),
             ("o", "swap selection ends"),
+            ("y", "copy selection (whole text if none)"),
             ("Enter", "elaborate on selection (word under caret if none)"),
             ("Esc", "cancel"),
         ],

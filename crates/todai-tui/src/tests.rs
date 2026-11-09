@@ -175,6 +175,20 @@ fn visual_selection_becomes_an_elaboration() {
 }
 
 #[test]
+fn y_copies_the_visual_selection() {
+    let mut h = Harness::new(80, 30);
+    h.keys("jvwvey");
+    assert_eq!(h.app.clipboard.as_deref(), Some("egui"));
+    assert_eq!(h.nav().mode, Mode::Normal);
+    assert!(h.screen().contains("copied 4 characters"), "{}", h.screen());
+
+    h.app.clipboard = None;
+    h.keys("vy");
+    let all = h.app.clipboard.clone().unwrap();
+    assert!(all.starts_with("Use egui or iced?") && all.contains("low"), "{all}");
+}
+
+#[test]
 fn wide_terminals_split_elaborations_into_a_column() {
     let mut h = Harness::new(140, 30);
     h.log.append(Actor::Operator, |s| Ok(Kind::ElabRequest { rid: s.next_elab_id(), target: "d1".into(), selection: "low".into(), note: None, parent: None })).unwrap();

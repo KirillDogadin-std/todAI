@@ -147,6 +147,8 @@ pub struct Outcome {
     /// Typing ended (submit or `Esc`): the frontend drops keyboard focus
     /// from its text field.
     pub leave_input: bool,
+    /// Text to put on the clipboard (`y` in visual mode).
+    pub copy: Option<String>,
 }
 
 pub struct Nav {
@@ -548,6 +550,10 @@ impl Nav {
     }
 
     fn visual_char(&mut self, c: char, out: &mut Outcome) {
+        if c == 'y' && self.prefix.is_none() {
+            self.yank(out);
+            return;
+        }
         let Some(v) = self.visual.as_mut() else { return };
         let t = &v.text;
         let n = t.len();
@@ -604,6 +610,15 @@ impl Nav {
         if !keep_h {
             v.h_pos = None;
         }
+    }
+
+    /// Copies the selection (the whole item without one) and leaves visual
+    /// mode, like vim's `y`.
+    fn yank(&mut self, out: &mut Outcome) {
+        let Some(v) = self.visual.take() else { return };
+        self.mode = Mode::Normal;
+        let (a, b) = v.range().unwrap_or((0, v.text.len() - 1));
+        out.copy = Some(v.text[a..=b].iter().collect());
     }
 
     fn visual_to_prompt(&mut self, state: &State) {

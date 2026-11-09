@@ -15,6 +15,8 @@ struct Harness {
     md: CommonMarkCache,
     log: Log,
     vim: bool,
+    /// The last text put on the clipboard.
+    copied: Option<String>,
     _dir: tempfile::TempDir,
 }
 
@@ -33,7 +35,7 @@ impl Harness {
         agent(Kind::TodoAdd { id: "t1".into(), title: "Push repo".into(), context: None });
         let ctx = egui::Context::default();
         let tab = Tab::open(log.path().to_owned(), super::input::wake(&ctx));
-        let mut h = Harness { ctx, tab, md: CommonMarkCache::default(), log, vim: true, _dir: dir };
+        let mut h = Harness { ctx, tab, md: CommonMarkCache::default(), log, vim: true, copied: None, _dir: dir };
         h.frame(vec![]);
         h.frame(vec![]);
         h
@@ -47,7 +49,7 @@ impl Harness {
         };
         let (tab, md, vim) = (&mut self.tab, &mut self.md, self.vim);
         let mut events_once = true;
-        let _ = self.ctx.run_ui(raw, |ui| {
+        let out = self.ctx.run_ui(raw, |ui| {
             tab.reload_if_dirty();
             // Multi-pass frames re-run this closure; keys must apply once.
             let kinds = if std::mem::take(&mut events_once) {
@@ -56,12 +58,20 @@ impl Harness {
                 if o.trash.is_some() {
                     tab.confirm_trash = o.trash;
                 }
+                if let Some(text) = o.copy {
+                    ui.ctx().copy_text(text);
+                }
                 o.kinds
             } else {
                 Vec::new()
             };
             draw_tab(ui, tab, md, vim, kinds);
         });
+        for c in out.platform_output.commands {
+            if let egui::OutputCommand::CopyText(t) = c {
+                self.copied = Some(t);
+            }
+        }
     }
 
     /// Each char is one frame, followed by an idle frame so focus settles.
@@ -191,6 +201,20 @@ fn visual_selection_elaborate_with_message() {
     let r = s.elab("r1").expect("request sent");
     assert_eq!((r.target.as_str(), r.selection.as_str(), r.note.as_deref()), ("d1", "egui", Some("what is it?")));
     assert_eq!(h.tab.nav.mode, Mode::Normal);
+}
+
+#[test]
+fn y_copies_the_visual_selection() {
+    let mut h = Harness::new();
+    h.move_to(item("d1"));
+    h.type_keys("vwvey");
+    assert_eq!(h.copied.as_deref(), Some("egui"));
+    assert_eq!(h.tab.nav.mode, Mode::Normal);
+
+    // No selection: the whole text.
+    h.type_keys("vy");
+    let all = h.copied.clone().unwrap();
+    assert!(all.starts_with("Use egui or iced?") && all.len() > "egui".len(), "{all}");
 }
 
 #[test]
