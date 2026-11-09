@@ -245,6 +245,30 @@ fn prune_forgets_only_boards_whose_file_is_gone() {
 }
 
 #[test]
+fn a_board_deleted_while_running_reads_as_absent() {
+    let f = Fixture::new();
+    let gone = f.dir.path().join("gone.jsonl");
+    std::fs::write(&gone, "").unwrap();
+    assert_eq!(f.post("/api/v2/boards", json!({"path": gone})).0, 201);
+    assert_eq!(f.get("/api/v2/boards").1.as_array().unwrap().len(), 2);
+    std::fs::remove_file(&gone).unwrap();
+
+    let (_, boards) = f.get("/api/v2/boards");
+    let boards: Vec<BoardInfo> = serde_json::from_value(boards).unwrap();
+    assert_eq!(boards, vec![BoardInfo::new(f.log.path())]);
+    let id = board_id(&gone);
+    assert_eq!(f.get(&format!("/api/v2/boards/{id}")).0, 404);
+    assert_eq!(f.get(&format!("/api/v2/boards/{id}/events")).0, 404);
+    let (status, _) = f.post(&format!("/api/v2/boards/{id}/actions"), json!({"type": "decision.resolve", "id": "d1", "text": "x"}));
+    assert_eq!(status, 404);
+    assert!(!gone.exists(), "an action must not recreate the file");
+
+    // Still registered, so it comes back with its file.
+    std::fs::write(&gone, "").unwrap();
+    assert_eq!(f.get(&format!("/api/v2/boards/{id}")).0, 200);
+}
+
+#[test]
 fn forget_from_the_cli_reaches_a_running_server() {
     let f = Fixture::new();
     // What `todai-server forget` does: a second Registry on the same dir.

@@ -147,6 +147,11 @@ when resolved. Trashed items are left out. Elaborations with the same root
 answers. To follow changes from here, long-poll `events` with
 `after=last_seq`.
 
+A registered board whose file is deleted while the server runs is left out
+of `GET /api/v2/boards` and gets `404` on its routes; it stays registered, so
+it comes back if the file does (an agent attaching with the same name).
+Startup and `todai-server prune` forget it for good.
+
 Board ids are 16 hex digits of a hash of the board's path. They are the only
 way to name a board, so a client can never reach a file that wasn't
 registered.

@@ -124,11 +124,17 @@ fn handle(shared: &Shared, req: &mut Request) -> Reply {
     if !authorized(req, &shared.token) {
         return error(401, "missing or wrong token (Authorization: Bearer ...)");
     }
-    let board = |id: &str| shared.registry.get(id).ok_or_else(|| error(404, format!("no board {id}")));
+    // A board whose file was deleted while the server runs stays registered
+    // (it may come back, e.g. `todai attach` with the same name; startup and
+    // `prune` forget it), but reads as absent rather than as an empty board.
+    let board = |id: &str| {
+        shared.registry.get(id).filter(|p| p.exists()).ok_or_else(|| error(404, format!("no board {id}")))
+    };
 
     let result = match (&method, route) {
         (Method::Get, ["boards"]) => {
-            let boards: Vec<BoardInfo> = shared.registry.list().iter().map(Board::info).collect();
+            let boards: Vec<BoardInfo> =
+                shared.registry.list().iter().filter(|b| b.path.exists()).map(Board::info).collect();
             Ok(json(200, &boards))
         }
         (Method::Post, ["boards"]) => register(shared, req),
