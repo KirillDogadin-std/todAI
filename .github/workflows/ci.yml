@@ -26,13 +26,18 @@ jobs:
       - name: todai-server has no GUI dependencies
         run: |
           cargo tree --locked -p todai-server -e normal > server-deps.txt
-          ! grep -E 'egui|eframe|winit|glow' server-deps.txt
+          ! grep -E 'egui|eframe|winit|glow|rusqlite|todai-memory' server-deps.txt
       # Shared frontend logic: the TUI builds on it, so no GUI either.
       - name: todai-client has no GUI dependencies
         run: |
           cargo tree --locked -p todai-client -e normal > client-deps.txt
-          ! grep -E 'egui|eframe|winit|glow' client-deps.txt
+          ! grep -E 'egui|eframe|winit|glow|rusqlite|todai-memory' client-deps.txt
+      # Memory is meant to be usable on its own: nothing else from todai.
+      - name: todai-memory depends on no other todai crate
+        run: |
+          cargo tree --locked -p todai-memory -e normal > memory-deps.txt
+          ! grep -E 'todai-(core|client|server|tui)' memory-deps.txt
       - name: todai-tui has no GUI dependencies
         run: |
           cargo tree --locked -p todai-tui -e normal > tui-deps.txt
-          ! grep -E 'egui|eframe|winit|glow' tui-deps.txt
+          ! grep -E 'egui|eframe|winit|glow|rusqlite|todai-memory' tui-deps.txt

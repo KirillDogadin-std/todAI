@@ -4,7 +4,8 @@ Native board (Rust + egui) where coding agents post decisions and manual todos
 for the operator, plus an optional headless HTTP server for answering from
 other machines. Start with `README.md`, then `docs/architecture.md`.
 
-Workspace: `crates/todai-core` (log, inbox, API types), `crates/todai-server`
+Workspace: `crates/todai-core` (log, inbox, API types), `crates/todai-memory`
+(decision memory, SQLite; not wired in yet), `crates/todai-server`
 (`todai-server`), `crates/todai-client` (frontend logic shared by the window
 and the TUI: tabs, keyboard navigation, socket), `crates/todai-tui`
 (`todai-tui`, the board in a terminal), and the root crate (`todai`: CLI +
@@ -65,6 +66,14 @@ to a **draft** release. Write the notes on the draft
   and exits 0.
 - **All writes go through `Log::append`** (flock + validate + append). Never
   rewrite a board file. The server is no exception.
+- **Memory writes go through `Memory::append`** (`crates/todai-memory`, one
+  transaction per event). Reasoning is never `UPDATE`d or `DELETE`d (triggers
+  refuse it): status changes and supersessions are new event rows, and
+  current state is derived. Schema changes only via numbered migrations in
+  `schema.rs`; never edit a released one.
+- **`todai-memory` depends on nothing else in todai**, so other programs can
+  use it; and nothing but the root `todai` depends on it (CI checks the
+  server, client and TUI don't link SQLite).
 - **`todai-core`, `todai-server`, `todai-client` and `todai-tui` stay
   GUI-free.** CI fails if `cargo tree` for the server, the client or the TUI
   shows egui/eframe.
