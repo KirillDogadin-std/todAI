@@ -108,3 +108,39 @@ fn project_files_are_readable_stable_and_distinct() {
     assert!(file_name(Path::new("/x/my repo!")).starts_with("my_repo_-"));
     assert!(file_name(Path::new("/")).starts_with("root-"));
 }
+
+/// Child half of `concurrent_processes_never_see_busy`: appends 100 events
+/// to the database in `$TODAI_MEMORY_TEST_DB`. Ignored when run normally.
+#[test]
+#[ignore]
+fn writer_process() {
+    let Some(path) = std::env::var_os("TODAI_MEMORY_TEST_DB") else { return };
+    let mut m = Memory::open(Path::new(&path)).unwrap();
+    for i in 0..100 {
+        m.append(event(&format!("p{}-{i}", std::process::id()), "created")).unwrap();
+    }
+}
+
+#[test]
+fn concurrent_processes_never_see_busy() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("m.sqlite");
+    // Separate processes, as agents in parallel sessions would be: SQLite's
+    // file locks, not just its in-process ones. Each re-runs this test binary.
+    let children: Vec<_> = (0..4)
+        .map(|_| {
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "tests::writer_process", "--ignored", "--quiet", "--test-threads=1"])
+                .env("TODAI_MEMORY_TEST_DB", &path)
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    for mut c in children {
+        assert!(c.wait().unwrap().success(), "a writer process failed");
+    }
+    let events = Memory::open(&path).unwrap().events(0).unwrap();
+    assert_eq!(events.len(), 400);
+    assert!(events.iter().enumerate().all(|(i, e)| e.seq == i as i64 + 1));
+}
