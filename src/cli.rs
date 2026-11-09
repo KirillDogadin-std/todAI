@@ -52,6 +52,9 @@ enum Cmd {
     },
     /// [agent] Print how an agent should use todai.
     Guide,
+    /// Decision memory for this project: remember decisions, find them again.
+    #[command(subcommand)]
+    Memory(crate::memory::Cmd),
     /// Install todai into your coding agents, at the scope you choose.
     /// Interactive without flags; shows every change before making it.
     Setup {
@@ -192,6 +195,7 @@ pub fn run(cli: Cli) -> Result<()> {
             println!("Pass this path as BOARD to todai commands. How to use it: `todai guide`.");
         }
         Cmd::Guide => print!("{}", agent::GUIDE),
+        Cmd::Memory(cmd) => crate::memory::run(cmd)?,
         Cmd::Setup { agents, scope, yes, dry_run, remove } => {
             agent::setup::run(agent::setup::Args { agents, scope, yes, dry_run, remove })?
         }

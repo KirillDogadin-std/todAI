@@ -28,7 +28,7 @@ remote frontends use instead of the file.
 | `crates/todai-server` | core, tiny_http | the HTTP server, as a library and the `todai-server` binary; no GUI |
 | `crates/todai-client` | core, notify, ureq | what every frontend shares: open boards, keyboard navigation, card text, the server client, the window socket, config and session; no GUI |
 | `crates/todai-tui` | core, client, ratatui | `todai-tui`: the board in a terminal; no GUI |
-| `todai` (repo root) | core, client, server, egui | the CLI, the window, agent integration; `todai serve` embeds the server |
+| `todai` (repo root) | core, memory, client, server, egui | the CLI, the window, agent integration; `todai serve` embeds the server |
 
 Keep the arrows pointing this way: core, server, client and TUI must build
 without egui (CI checks), so a headless install never pulls in GL. Only the
@@ -42,8 +42,9 @@ of the server, client and TUI (CI checks too).
 | `crates/todai-core/src/store/` | the event log: types (`event.rs`), folding into a board (`state.rs`), locked append and read (`mod.rs`) |
 | `crates/todai-core/src/inbox.rs` | turns unprocessed operator events into the text agents receive |
 | `crates/todai-core/src/api.rs` | the HTTP API's wire types and board ids |
-| `crates/todai-memory/src/` | `lib.rs` (`Memory::open` with WAL and busy timeout, `append`, `events`; `path_for` a project), `schema.rs` (migrations by `user_version`; triggers that refuse UPDATE/DELETE of events) |
+| `crates/todai-memory/src/` | `lib.rs` (`Memory::open` with WAL and busy timeout, `append`, `events`; `path_for` a project), `schema.rs` (migrations by `user_version`; triggers that refuse UPDATE/DELETE of events), `card.rs` (card types, validation, key normalisation; derived `card`/`key`/`tagged` tables, the card itself read from its `created` event), `format.rs` (gist line, hit block, full card) |
 | `crates/todai-server/src/` | `lib.rs` (args, bind, run), `http.rs` (routes, auth, long-poll), `changes.rs` (one shared file watcher that wakes long-polls), `registry.rs` (token, registered boards, address file) |
+| `src/memory.rs` | `todai memory ...`: finds the project's database, parses card sections from stdin, infers `--from` boards |
 | `src/cli.rs` | every subcommand; also starting the window (`open`, `spawn_window`, `gui_main`) and opening remote boards (`open_remote`) |
 | `crates/todai-client/src/nav.rs` | the keyboard state machine, on its own `Input` type; frontends translate their events into it |
 | `crates/todai-client/src/tab.rs` | one open board and its source (file watcher or server long-poll); wakes the frontend through a callback |

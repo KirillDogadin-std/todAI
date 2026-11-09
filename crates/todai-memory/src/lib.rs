@@ -17,9 +17,13 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
+mod card;
+pub mod format;
 mod schema;
 #[cfg(test)]
 mod tests;
+
+pub use card::{Card, CardDraft, Class, MAX_GIST, MAX_KEYS, Status, normalize_key};
 
 /// How long a writer waits for another connection's transaction to finish
 /// before giving up with `SQLITE_BUSY`.
@@ -33,14 +37,14 @@ pub enum Actor {
 }
 
 impl Actor {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Actor::Agent => "agent",
             Actor::Operator => "operator",
         }
     }
 
-    fn parse(s: &str) -> Result<Actor> {
+    pub(crate) fn parse(s: &str) -> Result<Actor> {
         match s {
             "agent" => Ok(Actor::Agent),
             "operator" => Ok(Actor::Operator),
@@ -117,19 +121,53 @@ impl Memory {
 
     /// Appends one event in its own transaction and returns it as stored.
     pub fn append(&mut self, e: NewEvent) -> Result<Event> {
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
-        let payload = serde_json::to_string(&e.payload)?;
-        let source = e.source.as_ref().map(serde_json::to_string).transpose()?;
         // IMMEDIATE takes the write lock up front, so two writers queue on
         // busy_timeout instead of one failing on lock upgrade.
         let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute(
-            "INSERT INTO event (ts, actor, card, kind, payload, source) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![ts, e.actor.as_str(), e.card, e.kind, payload, source],
-        )?;
-        let seq = tx.last_insert_rowid();
+        let event = insert_event(&tx, e)?;
         tx.commit()?;
-        Ok(Event { seq, ts, actor: e.actor, card: e.card, kind: e.kind, payload: e.payload, source: e.source })
+        Ok(event)
+    }
+
+    /// Records a new card: one `created` event, plus the derived rows that
+    /// make it findable, in one transaction. An axiom an agent writes is
+    /// stored as `proposed` until the operator confirms it.
+    pub fn create(&mut self, draft: CardDraft, actor: Actor, source: Option<Source>) -> Result<Card> {
+        let draft = draft.validate()?;
+        let class = draft.class.unwrap_or(Class::Context);
+        let status = if class == Class::Axiom && actor == Actor::Agent { Status::Proposed } else { Status::Active };
+        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let id = card::new_id(&tx, &draft)?;
+        let created = card::Created { class, status, draft };
+        let event = insert_event(
+            &tx,
+            NewEvent {
+                actor,
+                card: Some(id.clone()),
+                kind: "created".into(),
+                payload: serde_json::to_value(&created)?,
+                source,
+            },
+        )?;
+        card::index(&tx, &id, &created, event.seq)?;
+        tx.commit()?;
+        Ok(card::from_created(id, created, &event))
+    }
+
+    /// The card with this id, or the only one starting with it.
+    pub fn card(&self, id: &str) -> Result<Option<Card>> {
+        card::get(&self.conn, id)
+    }
+
+    /// Cards tagged with any of `keys` (normalised first), best first: most
+    /// keys matched, then axioms, then context, then one-offs, newest first.
+    pub fn find(&self, keys: &[String]) -> Result<Vec<Card>> {
+        card::find(&self.conn, keys)
+    }
+
+    /// The key vocabulary with how many cards use each, most used first.
+    pub fn keys(&self) -> Result<Vec<(String, usize)>> {
+        card::keys(&self.conn)
     }
 
     /// Events with `seq > after`, oldest first.
@@ -172,6 +210,22 @@ impl Memory {
         let seq: Option<i64> = self.conn.query_row("SELECT max(seq) FROM event", [], |r| r.get(0)).optional()?.flatten();
         Ok(seq.unwrap_or(0))
     }
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+}
+
+fn insert_event(tx: &rusqlite::Transaction, e: NewEvent) -> Result<Event> {
+    let ts = now_ms();
+    let payload = serde_json::to_string(&e.payload)?;
+    let source = e.source.as_ref().map(serde_json::to_string).transpose()?;
+    tx.execute(
+        "INSERT INTO event (ts, actor, card, kind, payload, source) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![ts, e.actor.as_str(), e.card, e.kind, payload, source],
+    )?;
+    let seq = tx.last_insert_rowid();
+    Ok(Event { seq, ts, actor: e.actor, card: e.card, kind: e.kind, payload: e.payload, source: e.source })
 }
 
 /// WAL is stored in the file, so only a new database needs switching. That
@@ -223,6 +277,6 @@ fn file_name(root: &Path) -> String {
 }
 
 /// FNV-1a, 64 bit: stable across Rust versions, unlike `DefaultHasher`.
-fn fnv1a(bytes: &[u8]) -> u64 {
+pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3))
 }

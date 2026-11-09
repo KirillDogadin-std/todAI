@@ -1,6 +1,7 @@
 mod agent;
 mod cli;
 mod gui;
+mod memory;
 
 use todai_client::{config, ipc, remote, session};
 use todai_core::{inbox, store};

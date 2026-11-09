@@ -5,7 +5,7 @@
 use anyhow::{Result, bail};
 use rusqlite::{Connection, TransactionBehavior};
 
-const MIGRATIONS: &[&str] = &[
+pub(crate) const MIGRATIONS: &[&str] = &[
     // 1: the event log. Rows are never updated or deleted.
     "CREATE TABLE event (
         seq     INTEGER PRIMARY KEY,
@@ -21,6 +21,25 @@ const MIGRATIONS: &[&str] = &[
         BEGIN SELECT RAISE(ABORT, 'memory events are append-only'); END;
     CREATE TRIGGER event_no_delete BEFORE DELETE ON event
         BEGIN SELECT RAISE(ABORT, 'memory events are append-only'); END;",
+    // 2: cards and keys, derived from `created` events (rebuildable from
+    // the log; never the only copy of anything).
+    "CREATE TABLE card (
+        id      TEXT PRIMARY KEY,
+        class   TEXT NOT NULL,
+        status  TEXT NOT NULL,
+        gist    TEXT NOT NULL,
+        created INTEGER NOT NULL REFERENCES event (seq)
+    );
+    CREATE TABLE key (
+        id     INTEGER PRIMARY KEY,
+        phrase TEXT NOT NULL UNIQUE
+    );
+    CREATE TABLE tagged (
+        key  INTEGER NOT NULL REFERENCES key (id),
+        card TEXT NOT NULL REFERENCES card (id),
+        PRIMARY KEY (key, card)
+    ) WITHOUT ROWID;
+    CREATE INDEX tagged_card ON tagged (card);",
 ];
 
 /// The schema version this build writes.

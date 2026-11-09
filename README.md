@@ -119,6 +119,7 @@ Screenshots show `examples/demo.sh`.
 | `todai elaborate BOARD rN [TEXT\|-]` | *agent*: answer an elaboration request |
 | `todai withdraw BOARD dN` | *agent*: drop a decision |
 | `todai show BOARD [--json]` | print the board |
+| `todai memory add`, `find`, `show`, `keys` | decision memory, early ([docs/memory.md](docs/memory.md)) |
 | `todai resolve`, `reopen`, `done`, `undone`, `ask`, `trash` | the operator's actions, from a shell |
 
 ## Files

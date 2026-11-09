@@ -5,7 +5,7 @@ for the operator, plus an optional headless HTTP server for answering from
 other machines. Start with `README.md`, then `docs/architecture.md`.
 
 Workspace: `crates/todai-core` (log, inbox, API types), `crates/todai-memory`
-(decision memory, SQLite; not wired in yet), `crates/todai-server`
+(decision memory, SQLite; `todai memory`), `crates/todai-server`
 (`todai-server`), `crates/todai-client` (frontend logic shared by the window
 and the TUI: tabs, keyboard navigation, socket), `crates/todai-tui`
 (`todai-tui`, the board in a terminal), and the root crate (`todai`: CLI +

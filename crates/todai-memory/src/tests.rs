@@ -144,3 +144,136 @@ fn concurrent_processes_never_see_busy() {
     assert_eq!(events.len(), 400);
     assert!(events.iter().enumerate().all(|(i, e)| e.seq == i as i64 + 1));
 }
+
+// ---- cards ----
+
+fn draft(class: Class, gist: &str, keys: &[&str]) -> CardDraft {
+    CardDraft {
+        class: Some(class),
+        gist: gist.into(),
+        context: "Picking the window toolkit.".into(),
+        why: "Memory.".into(),
+        keys: keys.iter().map(|k| k.to_string()).collect(),
+        ..Default::default()
+    }
+}
+
+fn mem() -> (tempfile::TempDir, Memory) {
+    let dir = tempfile::tempdir().unwrap();
+    let m = Memory::open(&dir.path().join("m.sqlite")).unwrap();
+    (dir, m)
+}
+
+#[test]
+fn validation_reports_every_problem() {
+    let bad = CardDraft { gist: "x".repeat(MAX_GIST + 1), keys: vec!["  ".into()], ..Default::default() };
+    let err = format!("{:#}", bad.validate().unwrap_err());
+    for want in ["gist is 121 characters", "context is empty", "why is empty", "no keys"] {
+        assert!(err.contains(want), "{want}: {err}");
+    }
+    let long_key = draft(Class::Context, "g", &["one two three four five six"]);
+    assert!(format!("{:#}", long_key.validate().unwrap_err()).contains("too long"));
+    let too_many = draft(Class::Context, "g", &["a", "b", "c", "d", "e", "f"]);
+    assert!(format!("{:#}", too_many.validate().unwrap_err()).contains("6 keys"));
+    let two_lines = draft(Class::Context, "a\nb", &["k"]);
+    assert!(two_lines.validate().is_err());
+}
+
+#[test]
+fn keys_are_normalised_and_deduped() {
+    assert_eq!(normalize_key("  GPU  Backend. "), "gpu backend");
+    assert_eq!(normalize_key("\"memory usage\"?"), "memory usage");
+    assert_eq!(normalize_key("c++ build"), "c++ build", "inner punctuation stays");
+    let d = draft(Class::Context, "g", &["GPU backend", "gpu  backend", "Memory"]).validate().unwrap();
+    assert_eq!(d.keys, vec!["gpu backend", "memory"]);
+}
+
+#[test]
+fn create_then_read_back() {
+    let (_d, mut m) = mem();
+    let source = Source { board: Some("splitter".into()), item: Some("d3".into()), session: None };
+    let mut d = draft(Class::Context, "  egui over iced: memory ", &["GUI toolkit", "memory usage"]);
+    d.rejected = "iced: 90 MB.".into();
+    let c = m.create(d, Actor::Agent, Some(source.clone())).unwrap();
+    assert!(c.id.starts_with('m') && c.id.len() == 9, "{}", c.id);
+    assert_eq!((c.gist.as_str(), c.status), ("egui over iced: memory", Status::Active));
+
+    assert_eq!(m.card(&c.id).unwrap(), Some(c.clone()));
+    assert_eq!(m.card(&c.id[..5]).unwrap(), Some(c.clone()), "unique prefix");
+    assert_eq!(m.card("m").unwrap(), None, "too short to be a prefix");
+    assert_eq!(m.card("nope").unwrap(), None);
+    assert_eq!(c.source, Some(source));
+
+    // One created event holds the whole card.
+    let events = m.events(0).unwrap();
+    assert_eq!((events.len(), events[0].kind.as_str(), events[0].card.as_deref()), (1, "created", Some(c.id.as_str())));
+    assert_eq!(events[0].payload["rejected"], "iced: 90 MB.");
+}
+
+#[test]
+fn agent_axioms_wait_for_the_operator() {
+    let (_d, mut m) = mem();
+    let a = m.create(draft(Class::Axiom, "agent axiom", &["k"]), Actor::Agent, None).unwrap();
+    let o = m.create(draft(Class::Axiom, "operator axiom", &["k"]), Actor::Operator, None).unwrap();
+    assert_eq!((a.status, o.status), (Status::Proposed, Status::Active));
+    assert_eq!(m.card(&a.id).unwrap().unwrap().status, Status::Proposed);
+}
+
+#[test]
+fn find_ranks_by_matched_keys_then_class_then_newest() {
+    let (_d, mut m) = mem();
+    let one_off = m.create(draft(Class::OneOff, "one-off", &["memory usage"]), Actor::Agent, None).unwrap();
+    let ctx_old = m.create(draft(Class::Context, "old context", &["memory usage"]), Actor::Agent, None).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let ctx_new = m.create(draft(Class::Context, "new context", &["memory usage"]), Actor::Agent, None).unwrap();
+    let axiom = m.create(draft(Class::Axiom, "axiom", &["memory usage"]), Actor::Operator, None).unwrap();
+    let both = m.create(draft(Class::OneOff, "two keys", &["memory usage", "gpu backend"]), Actor::Agent, None).unwrap();
+    m.create(draft(Class::Axiom, "unrelated", &["licensing"]), Actor::Operator, None).unwrap();
+
+    let ids = |cards: Vec<Card>| cards.into_iter().map(|c| c.id).collect::<Vec<_>>();
+    let hits = ids(m.find(&["Memory Usage".into(), "gpu backend".into()]).unwrap());
+    assert_eq!(hits, vec![both.id, axiom.id, ctx_new.id, ctx_old.id, one_off.id]);
+    assert_eq!(m.find(&["no such key".into()]).unwrap(), vec![]);
+
+    let vocab = m.keys().unwrap();
+    assert_eq!(vocab[0], ("memory usage".to_owned(), 5));
+    assert!(vocab.contains(&("licensing".to_owned(), 1)));
+}
+
+#[test]
+fn a_step_01_database_gains_the_card_tables() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("m.sqlite");
+    // What step 01 created: just the event log, at version 1.
+    let c = Connection::open(&path).unwrap();
+    c.execute_batch(schema::MIGRATIONS[0]).unwrap();
+    c.pragma_update(None, "user_version", 1).unwrap();
+    c.execute("INSERT INTO event (ts, actor, kind, payload) VALUES (1, 'agent', 'note', '{}')", []).unwrap();
+    drop(c);
+
+    let mut m = Memory::open(&path).unwrap();
+    assert_eq!(user_version(&path), schema::VERSION);
+    let card = m.create(draft(Class::Context, "g", &["k"]), Actor::Agent, None).unwrap();
+    assert_eq!(m.events(0).unwrap().len(), 2);
+    assert_eq!(m.find(&["k".into()]).unwrap(), vec![card]);
+}
+
+#[test]
+fn formats_fit_the_token_budget() {
+    let (_d, mut m) = mem();
+    let mut d = draft(Class::Context, "egui over iced: memory", &["gui toolkit", "memory usage"]);
+    d.context = "A resident board app that sits next to every agent session all day. ".repeat(8);
+    d.why = "Idle memory decides whether people keep it open. ".repeat(8);
+    d.applies = "Long-running desktop windows.".into();
+    let source = Source { board: Some("splitter".into()), item: Some("d3".into()), session: None };
+    let c = m.create(d, Actor::Agent, Some(source)).unwrap();
+
+    let line = format::gist_line(&c);
+    assert_eq!(line, format!("{} · context · egui over iced: memory", c.id));
+    let hit = format::hit_block(&c);
+    // ~4 characters per token: about 100 tokens.
+    assert!(hit.len() < 650, "{} chars:\n{hit}", hit.len());
+    assert!(hit.contains("from splitter/d3") && hit.contains("…"), "{hit}");
+    let full = format::full(&c);
+    assert!(full.contains("## Why") && full.contains(&c.why.trim().to_owned()), "{full}");
+}

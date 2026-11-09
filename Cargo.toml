@@ -40,6 +40,7 @@ serde_json.workspace = true
 skrifa = { version = "0.42.1", default-features = false, features = ["std"] }
 todai-client.workspace = true
 todai-core.workspace = true
+todai-memory.workspace = true
 todai-server.workspace = true
 
 [dev-dependencies]
