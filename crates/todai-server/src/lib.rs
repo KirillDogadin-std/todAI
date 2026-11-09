@@ -7,6 +7,7 @@
 //! events through `Log::append` like every other writer. The API is
 //! documented in `docs/server.md`.
 
+mod changes;
 mod http;
 mod registry;
 

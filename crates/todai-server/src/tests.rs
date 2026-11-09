@@ -165,7 +165,7 @@ fn long_poll_wakes_on_append() {
     let start = Instant::now();
     let (_, ev) = f.get(&format!("/api/v2/boards/{}/events?after=1&wait=10", f.id()));
     let ev: Events = serde_json::from_value(ev).unwrap();
-    assert!(start.elapsed() < Duration::from_secs(5), "returned on the append, not the timeout");
+    assert!(start.elapsed() < Duration::from_secs(2), "woken by the append, not the timeout or the safety re-check");
     assert_eq!(ev.last_seq, 2);
     assert!(matches!(&ev.events[0].kind, Kind::TodoAdd { title, .. } if title == "Push"));
     writer.join().unwrap();

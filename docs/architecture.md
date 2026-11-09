@@ -39,7 +39,7 @@ without egui (CI checks), so a headless install never pulls in GL.
 | `crates/todai-core/src/store/` | the event log: types (`event.rs`), folding into a board (`state.rs`), locked append and read (`mod.rs`) |
 | `crates/todai-core/src/inbox.rs` | turns unprocessed operator events into the text agents receive |
 | `crates/todai-core/src/api.rs` | the HTTP API's wire types and board ids |
-| `crates/todai-server/src/` | `lib.rs` (args, bind, run), `http.rs` (routes, auth, long-poll), `registry.rs` (token, registered boards, address file) |
+| `crates/todai-server/src/` | `lib.rs` (args, bind, run), `http.rs` (routes, auth, long-poll), `changes.rs` (one shared file watcher that wakes long-polls), `registry.rs` (token, registered boards, address file) |
 | `src/cli.rs` | every subcommand; also starting the window (`open`, `spawn_window`, `gui_main`) and opening remote boards (`open_remote`) |
 | `crates/todai-client/src/nav.rs` | the keyboard state machine, on its own `Input` type; frontends translate their events into it |
 | `crates/todai-client/src/tab.rs` | one open board and its source (file watcher or server long-poll); wakes the frontend through a callback |

@@ -3186,6 +3186,7 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "clap",
+ "notify",
  "qrcode",
  "serde",
  "serde_json",

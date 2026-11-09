@@ -9,6 +9,8 @@ description = "Headless todai server: serves boards over HTTP to operator fronte
 anyhow.workspace = true
 clap.workspace = true
 # Pure Rust, no image deps without default features: terminal QR codes for `pair`.
+# Long-polls wait on inotify (or the platform equivalent) instead of re-statting.
+notify = "8.2.0"
 qrcode = { version = "0.14.1", default-features = false }
 serde.workspace = true
 serde_json.workspace = true

@@ -12,24 +12,24 @@ use tiny_http::{Header, Method, Request, Response};
 use todai_core::api::{API_VERSION, ApiError, BoardInfo, BoardView, Events, Health, MAX_WAIT_SECS, Register};
 use todai_core::store::{Actor, Event, Kind, Log};
 
+use crate::changes::Changes;
 use crate::{Board, Registry};
 
 /// Requests in flight, long-polls included. Past this the server answers 503
 /// instead of starting more threads.
 const MAX_IN_FLIGHT: usize = 64;
 const MAX_BODY: u64 = 1 << 20;
-/// How often a long-poll checks its board file for growth.
-const POLL: Duration = Duration::from_millis(200);
 
 pub struct Shared {
     pub token: String,
     registry: Registry,
     in_flight: AtomicUsize,
+    changes: Changes,
 }
 
 impl Shared {
     pub fn new(token: String, registry: Registry) -> Shared {
-        Shared { token, registry, in_flight: AtomicUsize::new(0) }
+        Shared { token, registry, in_flight: AtomicUsize::new(0), changes: Changes::new() }
     }
 }
 
@@ -144,7 +144,7 @@ fn handle(shared: &Shared, req: &mut Request) -> Reply {
             Ok(false) => error(404, format!("no board {id}")),
             Err(e) => error(500, format!("{e:#}")),
         }),
-        (Method::Get, ["boards", id, "events"]) => board(id).map(|p| events(&p, query)),
+        (Method::Get, ["boards", id, "events"]) => board(id).map(|p| events(&shared.changes, &p, query)),
         (Method::Post, ["boards", id, "actions"]) => board(id).map(|p| action(&p, req)),
         _ => Err(error(404, format!("no route {method} {path}"))),
     };
@@ -197,7 +197,7 @@ fn state(path: &Path) -> Reply {
 
 /// Events after `after`; with `wait`, blocks until there are some or the
 /// wait runs out (an empty list).
-fn events(path: &Path, query: &str) -> Reply {
+fn events(changes: &Changes, path: &Path, query: &str) -> Reply {
     let param = |name: &str| -> Result<u64, Reply> {
         query
             .split('&')
@@ -209,18 +209,21 @@ fn events(path: &Path, query: &str) -> Reply {
         (Ok(a), Ok(w)) => (a, w.min(MAX_WAIT_SECS)),
         (Err(e), _) | (_, Err(e)) => return e,
     };
-    match poll(&Log::new(path), after, Instant::now() + Duration::from_secs(wait)) {
+    match poll(changes, &Log::new(path), after, Instant::now() + Duration::from_secs(wait)) {
         Ok(ev) => json(200, &ev),
         Err(e) => error(500, format!("{e:#}")),
     }
 }
 
-/// Re-reads the log only when the file's size changed: appends are the only
-/// writes, so an unchanged size means nothing new.
-fn poll(log: &Log, after: u64, deadline: Instant) -> anyhow::Result<Events> {
+/// Sleeps until the board file changes (see [`Changes`]), and re-reads the
+/// log only when its size changed: appends are the only writes, so an
+/// unchanged size means nothing new.
+fn poll(changes: &Changes, log: &Log, after: u64, deadline: Instant) -> anyhow::Result<Events> {
+    let sub = changes.subscribe(log.path());
     let mut last_len: Option<Option<u64>> = None; // None: not read yet
     let mut last_seq = 0;
     loop {
+        let seen = sub.generation();
         let len = std::fs::metadata(log.path()).map(|m| m.len()).ok();
         if last_len != Some(len) {
             last_len = Some(len);
@@ -237,7 +240,7 @@ fn poll(log: &Log, after: u64, deadline: Instant) -> anyhow::Result<Events> {
         if Instant::now() >= deadline {
             return Ok(Events { events: Vec::new(), last_seq, reset: false });
         }
-        std::thread::sleep(POLL);
+        sub.wait(seen, deadline);
     }
 }
 
