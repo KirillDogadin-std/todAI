@@ -14,6 +14,7 @@ use crate::ipc::{self, Incoming, Reply, Request};
 use crate::session::Session;
 use crate::store::{DecisionStatus, Kind};
 use board::Board;
+use todai_client::follow::Follows;
 use todai_client::nav::{self, FocusRequest, Mode};
 use todai_client::tab::Tab;
 pub use todai_client::tab::Location;
@@ -137,6 +138,7 @@ struct App {
     closing: bool,
     requests: mpsc::Receiver<Incoming>,
     saved: Session,
+    follows: Follows,
 }
 
 impl App {
@@ -162,6 +164,7 @@ impl App {
             closing: false,
             requests,
             saved: saved.clone(),
+            follows: Follows::default(),
         };
         // Restore last session, skipping boards that were deleted since.
         for loc in &saved.tabs {
@@ -170,6 +173,7 @@ impl App {
             }
         }
         app.active = saved.active.min(app.tabs.len().saturating_sub(1));
+        app.follows.restore(&saved.follow, &input::wake(&cc.egui_ctx));
         for p in paths {
             app.open_or_focus(&cc.egui_ctx, Location::File(p));
         }
@@ -177,9 +181,13 @@ impl App {
     }
 
     fn open_or_focus(&mut self, ctx: &egui::Context, loc: Location) {
+        self.active = self.open(ctx, loc);
+    }
+
+    /// Opens `loc` in a new tab unless one shows it already; its index.
+    fn open(&mut self, ctx: &egui::Context, loc: Location) -> usize {
         if let Some(i) = self.tabs.iter().position(|t| t.location.same(&loc)) {
-            self.active = i;
-            return;
+            return i;
         }
         let tab = match &loc {
             Location::File(p) => Tab::open(p.clone(), input::wake(ctx)),
@@ -195,7 +203,16 @@ impl App {
             },
         };
         self.tabs.push(tab);
-        self.active = self.tabs.len() - 1;
+        self.tabs.len() - 1
+    }
+
+    /// Boards new on followed servers open as background tabs, like an
+    /// agent's board appearing; following ends with a server's last tab.
+    fn follow_servers(&mut self, ctx: &egui::Context) {
+        for loc in self.follows.new_boards() {
+            self.open(ctx, loc);
+        }
+        self.follows.retain_open(&self.tabs.iter().map(|t| &t.location).collect::<Vec<_>>());
     }
 
     fn serve_requests(&mut self, ctx: &egui::Context) {
@@ -211,6 +228,13 @@ impl App {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                     Reply::ok()
                 }
+                Request::Follow { server, known } => match crate::remote::client_for(&server) {
+                    Some(client) => {
+                        self.follows.follow(client, known, input::wake(ctx));
+                        Reply::ok()
+                    }
+                    None => Reply { error: Some(format!("no token saved for {server}")), ..Reply::default() },
+                },
                 Request::Focus => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                     Reply::ok()
@@ -239,7 +263,11 @@ impl App {
     }
 
     fn save_session(&mut self) {
-        let now = Session { tabs: self.tabs.iter().map(|t| t.location.clone()).collect(), active: self.active };
+        let now = Session {
+            tabs: self.tabs.iter().map(|t| t.location.clone()).collect(),
+            active: self.active,
+            follow: self.follows.saved(),
+        };
         if now != self.saved {
             if let Err(e) = now.save(SESSION)
                 && let Some(t) = self.tabs.get_mut(self.active)
@@ -493,6 +521,7 @@ impl eframe::App for App {
             self.confirm_quit = true;
         }
         self.serve_requests(ctx);
+        self.follow_servers(ctx);
         for t in &mut self.tabs {
             t.reload_if_dirty();
         }

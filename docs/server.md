@@ -51,7 +51,7 @@ in the clear, so put it behind something that encrypts:
 Then, on the other machine:
 
 ```sh
-todai open --server http://HOST:7341 --token TOKEN           # every board
+todai open --server http://HOST:7341 --token TOKEN           # every board, and new ones as they come
 todai open --server http://HOST:7341 --token TOKEN board     # by name, project/name, or id
 ```
 
@@ -59,6 +59,13 @@ The token is saved (0600, `~/.local/state/todai/remotes.json`), so later
 `todai open --server URL` and session restore need no flag. `$TODAI_TOKEN`
 works too. The desktop client speaks plain HTTP only; use the VPN route
 for it.
+
+Opened without board names, the server is **followed**: boards registered
+there later (an agent's `todai attach` on that machine) open as new tabs
+within about 15 s, in the background so the tab you're on stays. A board
+opens this way once; close its tab and it stays closed. Following ends when
+you close the server's last tab, and survives a restart with the session.
+`todai-tui --server URL` does the same.
 
 Remote tabs look and work like local ones. The tab title is
 `board@host`. If the server goes away the status bar says so and the tab

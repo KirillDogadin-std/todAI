@@ -268,3 +268,51 @@ fn snapshot() {
     h.keys("j");
     println!("{}", h.screen());
 }
+
+#[test]
+fn boards_registered_on_a_followed_server_open_as_background_tabs() {
+    use std::time::{Duration, Instant};
+    use todai_client::follow::Follows;
+    use todai_client::tab::Location;
+
+    let mut h = Harness::new(100, 30);
+    let dir = tempfile::tempdir().unwrap();
+    let board = |name: &str| {
+        let log = Log::new(dir.path().join(format!("{name}.jsonl")));
+        log.append(Actor::Agent, |_| Ok(Kind::TodoAdd { id: "t1".into(), title: "x".into(), context: None })).unwrap();
+        log.path().to_owned()
+    };
+    let first = board("first");
+    let cfg = todai_server::Config { listen: "127.0.0.1:0".into(), dir: dir.path().join("server"), boards: vec![first.clone()] };
+    let server = todai_server::Server::bind(&cfg).unwrap().spawn();
+    let client = todai_client::remote::Client::new(&format!("http://{}", server.addr), &server.token);
+    let remote = |id: String, name: &str| Location::Remote { server: client.base().into(), board: id, name: name.into() };
+
+    // What `todai-tui --server URL` does: open the server's boards, then follow it.
+    h.app.follows = Follows::with_interval(Duration::from_millis(50));
+    let first_id = todai_core::api::board_id(&first);
+    h.app.open_or_focus(remote(first_id.clone(), "first"));
+    h.app.active = 0;
+    h.app.follow(client.clone(), vec![first_id]);
+
+    // An agent attaches on the server's machine.
+    let later = board("later");
+    client.register(&later).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while h.app.tabs.len() < 3 {
+        assert!(Instant::now() < deadline, "the new board never opened");
+        std::thread::sleep(Duration::from_millis(20));
+        h.frame();
+    }
+    assert_eq!(h.app.tabs[2].tab.location, remote(todai_core::api::board_id(&later), "later"));
+    assert_eq!(h.app.active, 0, "a background tab: the operator stays where they were");
+
+    // Closing it keeps it closed; closing the server's last tab stops following.
+    h.app.tabs.truncate(2);
+    std::thread::sleep(Duration::from_millis(200));
+    h.frame();
+    assert_eq!(h.app.tabs.len(), 2);
+    h.app.tabs.truncate(1);
+    h.frame();
+    assert_eq!(h.app.follows.saved(), vec![]);
+}

@@ -47,6 +47,7 @@ without egui (CI checks), so a headless install never pulls in GL.
 | `crates/todai-client/src/remote.rs` | HTTP client for the server; saved tokens; registering boards with a local server |
 | `crates/todai-client/src/ipc.rs` | single-instance socket: bind / take over a stale socket, request and reply |
 | `crates/todai-client/src/session.rs`, `config.rs` | open tabs (one file per frontend), restored at startup; theme and input mode |
+| `crates/todai-client/src/follow.rs` | followed servers: a thread per server re-lists its boards every 15 s; new ones open as tabs |
 | `src/gui/` | the window: `mod.rs` (app, tabs, panels, dialogs, cheatsheet), `board.rs` (rendering), `input.rs` (egui events → `nav::Input`) |
 | `crates/todai-tui/src/` | the terminal board: `app.rs` (tabs, socket, key routing), `ui.rs` (frame, overlays, cheatsheet), `board.rs` (cards as lines), `markdown.rs`, `text.rs` (wrapping), `edit.rs` (the field being typed into) |
 | `src/agent/` | what agents see: `guide.md` (the protocol), the skill, `claude.rs` (hooks), `pi-extension.ts`, `setup.rs` (install / remove) |

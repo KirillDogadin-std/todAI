@@ -3207,6 +3207,7 @@ dependencies = [
  "tempfile",
  "todai-client",
  "todai-core",
+ "todai-server",
  "unicode-width",
 ]
 

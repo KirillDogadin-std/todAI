@@ -52,9 +52,9 @@ enum Msg {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let remote = match &args.server {
+    let (remote, follow) = match &args.server {
         Some(server) => remote_boards(server, args.token.as_deref(), &args.files)?,
-        None => Vec::new(),
+        None => (Vec::new(), None),
     };
     let files = if args.server.is_some() {
         Vec::new()
@@ -92,8 +92,16 @@ fn main() -> Result<()> {
     for f in files {
         app.open_file(f);
     }
+    let known = remote.iter().filter_map(|l| match l {
+        Location::Remote { board, .. } => Some(board.clone()),
+        Location::File(_) => None,
+    });
+    let known: Vec<String> = known.collect();
     for loc in remote {
         app.open_or_focus(loc);
+    }
+    if let Some(client) = follow {
+        app.follow(client, known);
     }
 
     let result = run(&mut app, tx, rx);
@@ -142,8 +150,13 @@ fn run(app: &mut App, tx: mpsc::Sender<Msg>, rx: mpsc::Receiver<Msg>) -> Result<
     result
 }
 
-/// Resolves `--server` boards and saves the token, before the screen is taken.
-fn remote_boards(server: &str, token: Option<&str>, wanted: &[PathBuf]) -> Result<Vec<Location>> {
+/// Resolves `--server` boards and saves the token, before the screen is
+/// taken. Without board names, also the client whose server to follow.
+fn remote_boards(
+    server: &str,
+    token: Option<&str>,
+    wanted: &[PathBuf],
+) -> Result<(Vec<Location>, Option<todai_client::remote::Client>)> {
     let server = server.trim_end_matches('/');
     let token = token.map(str::to_owned).or_else(|| std::env::var("TODAI_TOKEN").ok().filter(|t| !t.is_empty()));
     let client = match &token {
@@ -159,8 +172,9 @@ fn remote_boards(server: &str, token: Option<&str>, wanted: &[PathBuf]) -> Resul
     if let Some(t) = &token {
         todai_client::remote::save_token(server, t)?;
     }
-    Ok(picked
+    let locations = picked
         .into_iter()
         .map(|b| Location::Remote { server: client.base().to_owned(), board: b.id, name: b.name })
-        .collect())
+        .collect();
+    Ok((locations, wanted.is_empty().then_some(client)))
 }

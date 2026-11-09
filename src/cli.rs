@@ -341,11 +341,20 @@ fn open_remote(server: &str, token: Option<&str>, wanted: &[PathBuf]) -> Result<
     }
     open(Vec::new())?;
     let socket = ipc::socket_path();
+    let known: Vec<String> = picked.iter().map(|b| b.id.clone()).collect();
     for b in picked {
         let req = Request::OpenRemote { server: client.base().to_owned(), board: b.id, name: b.name.clone() };
         if let Some(ipc::Reply { error: Some(e), .. }) = ipc::send(&socket, &req)? {
             // A window from an older todai doesn't know remote boards.
             bail!("the window refused {}: {e}; restart it with `pkill -f 'todai __gui'`", b.name);
+        }
+    }
+    // Without board names, the whole server: boards agents attach there
+    // later open as tabs too.
+    if wanted.is_empty() {
+        let req = Request::Follow { server: client.base().to_owned(), known };
+        if let Some(ipc::Reply { error: Some(e), .. }) = ipc::send(&socket, &req)? {
+            bail!("the window won't follow {}: {e}; restart it with `pkill -f 'todai __gui'`", client.base());
         }
     }
     Ok(())

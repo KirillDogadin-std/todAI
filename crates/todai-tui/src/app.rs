@@ -9,6 +9,7 @@ use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::{Position, Rect};
+use todai_client::follow::Follows;
 use todai_client::ipc::{Incoming, Reply, Request};
 use todai_client::nav::{Env, Focus, FocusRequest, Input, Key, Mode, Mods, Outcome};
 use todai_client::session::Session;
@@ -59,6 +60,7 @@ pub struct App {
     /// Persist tabs across runs (off in tests).
     persist: bool,
     wake: Wake,
+    pub(crate) follows: Follows,
 }
 
 impl App {
@@ -77,6 +79,7 @@ impl App {
             saved: Session::default(),
             persist,
             wake,
+            follows: Follows::default(),
         }
     }
 
@@ -89,13 +92,18 @@ impl App {
             }
         }
         self.active = saved.active.min(self.tabs.len().saturating_sub(1));
+        self.follows.restore(&saved.follow, &self.wake);
         self.saved = saved;
     }
 
     pub fn open_or_focus(&mut self, loc: Location) {
+        self.active = self.open(loc);
+    }
+
+    /// Opens `loc` in a new tab unless one shows it already; its index.
+    fn open(&mut self, loc: Location) -> usize {
         if let Some(i) = self.tabs.iter().position(|o| o.tab.location.same(&loc)) {
-            self.active = i;
-            return;
+            return i;
         }
         let tab = match &loc {
             Location::File(p) => Tab::open(p.clone(), self.wake.clone()),
@@ -111,7 +119,22 @@ impl App {
             },
         };
         self.tabs.push(Open { tab, edit: None, scroll: [0, 0], prompt_caret: None });
-        self.active = self.tabs.len() - 1;
+        self.tabs.len() - 1
+    }
+
+    /// Follows `client`'s server: boards it registers from now on open as
+    /// tabs; `known` ids never do.
+    pub fn follow(&mut self, client: todai_client::remote::Client, known: Vec<String>) {
+        self.follows.follow(client, known, self.wake.clone());
+    }
+
+    /// Boards new on followed servers open as background tabs; following
+    /// ends with a server's last tab.
+    fn follow_servers(&mut self) {
+        for loc in self.follows.new_boards() {
+            self.open(loc);
+        }
+        self.follows.retain_open(&self.tabs.iter().map(|o| &o.tab.location).collect::<Vec<_>>());
     }
 
     pub fn open_file(&mut self, path: PathBuf) {
@@ -122,6 +145,7 @@ impl App {
     /// that isn't a key. Called before every frame.
     pub fn tick(&mut self) {
         self.serve_requests();
+        self.follow_servers();
         for o in &mut self.tabs {
             o.tab.reload_if_dirty();
         }
@@ -142,6 +166,13 @@ impl App {
                     self.open_or_focus(Location::Remote { server, board, name });
                     Reply::ok()
                 }
+                Request::Follow { server, known } => match todai_client::remote::client_for(&server) {
+                    Some(client) => {
+                        self.follow(client, known);
+                        Reply::ok()
+                    }
+                    None => Reply { error: Some(format!("no token saved for {server}")), ..Reply::default() },
+                },
                 // A terminal can't raise itself; the board is there when you look.
                 Request::Focus => Reply::ok(),
                 Request::List => Reply {
@@ -177,7 +208,11 @@ impl App {
         if !self.persist {
             return;
         }
-        let now = Session { tabs: self.tabs.iter().map(|o| o.tab.location.clone()).collect(), active: self.active };
+        let now = Session {
+            tabs: self.tabs.iter().map(|o| o.tab.location.clone()).collect(),
+            active: self.active,
+            follow: self.follows.saved(),
+        };
         if now != self.saved {
             if let Err(e) = now.save(SESSION) {
                 self.notice = Some(format!("saving session: {e:#}"));

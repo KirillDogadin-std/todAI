@@ -6,6 +6,7 @@
 
 pub mod cardtext;
 pub mod config;
+pub mod follow;
 pub mod ipc;
 pub mod nav;
 pub mod notify;

@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::state_dir;
+use crate::follow::Followed;
 use crate::tab::Location;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -11,6 +12,9 @@ use crate::tab::Location;
 pub struct Session {
     pub tabs: Vec<Location>,
     pub active: usize,
+    /// Servers whose new boards open as tabs (see `follow`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub follow: Vec<Followed>,
 }
 
 impl Session {

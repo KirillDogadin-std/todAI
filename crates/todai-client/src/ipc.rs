@@ -19,6 +19,9 @@ pub enum Request {
     /// Open a board from a todai server; its token must already be saved
     /// (`remote::save_token`), so it never travels over this socket.
     OpenRemote { server: String, board: String, name: String },
+    /// Open boards that `server` registers from now on as tabs; `known` are
+    /// the ids the sender already opened (see `follow`).
+    Follow { server: String, known: Vec<String> },
     /// Raise the window.
     Focus,
     /// Report open tabs.
