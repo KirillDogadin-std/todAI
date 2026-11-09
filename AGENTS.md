@@ -21,6 +21,7 @@ cargo test                  # store, vim motions, IPC, setup merge, server API, 
 cargo build -p todai-server # the headless server alone (must never depend on egui)
 cargo build --release       # use this binary for memory or startup measurements (see below)
 examples/demo.sh            # populated demo board in a real window (--no-open: just build it)
+cargo audit                 # known vulnerabilities in Cargo.lock (CI: audit.yml, also weekly)
 ```
 
 Measure memory on the **second** launch of a binary at a given path. On

@@ -1,0 +1,26 @@
+name: Audit
+
+# Checks Cargo.lock against the RustSec advisory database. Fails on known
+# vulnerabilities; unmaintained or yanked crates only warn. Runs weekly too,
+# because advisories are published without any change on our side.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit
