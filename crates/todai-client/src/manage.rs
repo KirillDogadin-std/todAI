@@ -89,14 +89,20 @@ pub enum Deleted {
     Folder(PathBuf),
 }
 
-/// Deletes a board by moving it to the trash.
+/// Deletes a board by moving it to the desktop trash ([`home_trash`]).
 pub fn delete(path: &Path) -> Result<Deleted> {
+    delete_into(path, home_trash().as_deref())
+}
+
+/// Deletes a board by moving it into the freedesktop trash at `trash`
+/// (tests pass their own), else into `.agents/todai/trash/`.
+pub fn delete_into(path: &Path, trash: Option<&Path>) -> Result<Deleted> {
     let path = std::path::absolute(path)?;
     if !path.is_file() {
         bail!("no board {}", path.display());
     }
-    if let Some(trash) = home_trash()
-        && let Ok(to) = trash_into(&trash, &path)
+    if let Some(trash) = trash
+        && let Ok(to) = trash_into(trash, &path)
     {
         return Ok(Deleted::Trash(to));
     }
@@ -107,6 +113,56 @@ pub fn delete(path: &Path) -> Result<Deleted> {
     Ok(Deleted::Folder(to))
 }
 
+fn stem(p: &Path) -> String {
+    p.file_stem().map_or_else(String::new, |s| s.to_string_lossy().into_owned())
+}
+
+/// Archives each board (unarchives archived ones) and says what happened.
+/// `before` runs first for each board being archived (frontends close its
+/// tabs); `track` records the new paths (off in tests).
+pub fn toggle_archive_all(paths: &[PathBuf], track: bool, mut before: impl FnMut(&Path)) -> String {
+    let (mut done, mut errors) = (Vec::new(), Vec::new());
+    for p in paths {
+        let r = if is_archived(p) {
+            unarchive(p)
+        } else {
+            before(p);
+            archive(p)
+        };
+        match r {
+            Ok(to) => {
+                if track {
+                    crate::tracked::track(&to);
+                }
+                done.push(to);
+            }
+            Err(e) => errors.push(format!("{e:#}")),
+        }
+    }
+    let msg = match done.as_slice() {
+        [] => String::new(),
+        [one] if is_archived(one) => format!("Archived {}.", stem(one)),
+        [one] => format!("Unarchived {}.", stem(one)),
+        many => format!("Moved {} boards.", many.len()),
+    };
+    format!("{msg} {}", errors.join("; ")).trim().to_owned()
+}
+
+/// Deletes each board into `trash` (see [`delete_into`]) and says where
+/// they went. `before` runs first for each (frontends close its tabs).
+pub fn delete_all(paths: &[PathBuf], trash: Option<&Path>, mut before: impl FnMut(&Path)) -> String {
+    let mut out = Vec::new();
+    for p in paths {
+        before(p);
+        out.push(match delete_into(p, trash) {
+            Ok(Deleted::Trash(_)) => format!("{} moved to the trash", stem(p)),
+            Ok(Deleted::Folder(to)) => format!("{} moved to {}", stem(p), to.display()),
+            Err(e) => format!("{e:#}"),
+        });
+    }
+    out.join("; ") + "."
+}
+
 /// `.agents/todai` for a live or archived board.
 fn board_root(path: &Path) -> PathBuf {
     let dir = path.parent().unwrap_or(Path::new("."));
@@ -114,7 +170,7 @@ fn board_root(path: &Path) -> PathBuf {
 }
 
 /// `$XDG_DATA_HOME/Trash` (else `~/.local/share/Trash`).
-fn home_trash() -> Option<PathBuf> {
+pub fn home_trash() -> Option<PathBuf> {
     let data = std::env::var_os("XDG_DATA_HOME")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)

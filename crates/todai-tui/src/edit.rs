@@ -37,7 +37,8 @@ pub fn key(edit: &mut Edit, text: &mut String, k: &KeyEvent) -> bool {
             remove(text, start, edit.caret);
             edit.caret = start;
         }
-        KeyCode::Char('w') if alt => {
+        // Ctrl+W as in a shell; Alt+W kept for terminals that take Ctrl+W.
+        KeyCode::Char('w') if alt || ctrl => {
             let start = word_start(text, edit.caret);
             remove(text, start, edit.caret);
             edit.caret = start;

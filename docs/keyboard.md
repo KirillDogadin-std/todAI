@@ -162,7 +162,11 @@ differences, because terminals can't send some chords:
 | `Ctrl +` · `Ctrl -` (zoom) | none: elaborations get their own column at 120 columns |
 
 While typing: `Ctrl+A` / `Ctrl+E` line start / end, `Ctrl+U` delete to line
-start, `Alt+Backspace` delete a word. Pasting works as one insertion.
+start, `Ctrl+W` or `Alt+Backspace` delete a word (so `Ctrl+W` closes the tab
+only when you aren't typing). Pasting works as one insertion.
+
+The board list works the same; the mouse wheel moves its cursor and a click
+on a row opens that board.
 
 Mouse: the wheel scrolls the column under it (or the zoom overlay); a click
 puts the cursor on a card, toggles a section header, picks an option (and

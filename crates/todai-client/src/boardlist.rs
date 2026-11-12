@@ -91,7 +91,11 @@ impl BoardList {
             })
             .collect();
         self.marked.retain(|m| paths.contains(m));
-        self.cursor = at.and_then(|p| self.visible().iter().position(|r| r.summary.path == p)).unwrap_or(0);
+        // Follow the cursor's board; if it left the list (archived,
+        // deleted), stay at the same place.
+        if let Some(i) = at.and_then(|p| self.visible().iter().position(|r| r.summary.path == p)) {
+            self.cursor = i;
+        }
         self.clamp();
     }
 
@@ -284,6 +288,37 @@ impl BoardList {
         }
         None
     }
+}
+
+/// Title, body and confirm-button label for an action that asks first.
+pub fn confirm_text(action: &Action) -> Option<(String, String, &'static str)> {
+    let stem = |p: &PathBuf| p.file_stem().map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+    match action {
+        Action::Delete(paths) => {
+            let waiting: usize = paths.iter().map(|p| Summary::load(p).waiting).sum();
+            let names: Vec<String> = paths.iter().map(stem).collect();
+            let title = match paths.len() {
+                1 => format!("Delete {}?", names[0]),
+                n => format!("Delete {n} boards?"),
+            };
+            let mut body = format!("{}\nThey go to the trash; restore them from your file manager.", names.join(", "));
+            if waiting > 0 {
+                body.push_str(&format!("\n{waiting} items still wait for you."));
+            }
+            Some((title, body, "Delete"))
+        }
+        Action::ArchiveStale(paths) => Some((
+            format!("Archive {} stale boards?", paths.len()),
+            "Nothing waits on them and no agent wrote for a week. Archived boards come back with Unarchive.".into(),
+            "Archive",
+        )),
+        _ => None,
+    }
+}
+
+/// What to tell the operator after creating board `name`.
+pub fn created_notice(name: &str) -> String {
+    format!("Created {name}. Have the agent in that project run: todai attach {name}")
 }
 
 /// `now`, `5 min ago`, `3 h ago`, `2 d ago`; `never` for 0.

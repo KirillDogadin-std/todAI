@@ -330,3 +330,100 @@ fn boards_registered_on_a_followed_server_open_as_background_tabs() {
     h.frame();
     assert_eq!(h.app.follows.saved(), vec![]);
 }
+
+// ---- board list (Ctrl+O, gb) and closing tabs ----
+
+/// A harness whose board list sees `names` (projects `alpha`, `beta`) plus
+/// the harness's own board, and whose trash is a temp folder.
+fn with_boards(h: &mut Harness, names: &[&str]) -> Vec<std::path::PathBuf> {
+    let root = h._dir.path();
+    let mut paths = vec![h.log.path().to_owned()];
+    for n in names {
+        let (proj, name) = n.split_once('/').unwrap();
+        let p = root.join(proj).join(".agents/todai").join(format!("{name}.jsonl"));
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "").unwrap();
+        paths.push(p);
+    }
+    h.app.test_tracked = Some(paths.clone());
+    h.app.test_trash = Some(root.join("Trash"));
+    paths
+}
+
+fn ctrl(h: &mut Harness, c: char) {
+    h.key(KeyCode::Char(c), KeyModifiers::CONTROL);
+}
+
+#[test]
+fn board_list_opens_moves_and_opens_a_board() {
+    let mut h = Harness::new(100, 30);
+    let paths = with_boards(&mut h, &["alpha/main", "beta/release"]);
+    ctrl(&mut h, 'o');
+    let s = h.screen();
+    assert!(s.contains("Boards") && s.contains("Tracked boards") && s.contains("alpha") && s.contains("release"), "{s}");
+    assert!(s.contains("3 waiting") && s.contains("open"), "the harness board has d1, d2 and t1 pending: {s}");
+    // Rows by project: the harness board's temp folder (`.tmp…` sorts
+    // first), alpha/main, beta/release.
+    h.keys("jj");
+    h.enter();
+    assert!(h.app.boards.is_none());
+    assert_eq!(h.app.tabs[h.app.active].tab.location, todai_client::tab::Location::File(paths[2].clone()));
+    // gb opens it again; Esc closes.
+    h.keys("gb");
+    assert!(h.app.boards.is_some());
+    h.esc();
+    assert!(h.app.boards.is_none());
+}
+
+#[test]
+fn board_list_archives_creates_and_deletes() {
+    let mut h = Harness::new(100, 30);
+    let paths = with_boards(&mut h, &["alpha/main", "alpha/old"]);
+    ctrl(&mut h, 'o');
+    // The harness board, alpha/main, alpha/old: archive old.
+    h.keys("jja");
+    assert!(!paths[2].exists() && h._dir.path().join("alpha/.agents/todai/archive/old.jsonl").exists());
+    assert!(h.screen().contains("Archived old."), "{}", h.screen());
+    // The cursor stays in place (now on alpha/main); n: a new board in alpha.
+    h.keys("nreview");
+    h.enter();
+    let review = h._dir.path().join("alpha/.agents/todai/review.jsonl");
+    assert!(review.exists());
+    assert!(h.screen().contains("todai attach review"), "{}", h.screen());
+    // d asks first; n keeps it, y moves it to the (test) trash.
+    h.keys("d");
+    assert!(h.screen().contains("Delete main?"), "{}", h.screen());
+    h.keys("n");
+    assert!(paths[1].exists());
+    h.keys("d");
+    h.keys("y");
+    assert!(!paths[1].exists() && h._dir.path().join("Trash/files/main.jsonl").exists());
+}
+
+#[test]
+fn closing_a_tab_with_pending_items_asks_first() {
+    let mut h = Harness::new(100, 30);
+    ctrl(&mut h, 'w');
+    assert!(h.screen().contains("Close b@") || h.screen().contains("Close b?"), "{}", h.screen());
+    assert!(h.screen().contains("items wait for you"));
+    h.keys("n");
+    assert_eq!(h.app.tabs.len(), 1);
+    ctrl(&mut h, 'w');
+    h.keys("y");
+    assert!(h.app.tabs.is_empty());
+    // With nothing open, the list is still reachable.
+    with_boards(&mut h, &[]);
+    h.keys("gb");
+    assert!(h.app.boards.is_some());
+}
+
+#[test]
+fn ctrl_w_while_typing_deletes_a_word() {
+    let mut h = Harness::new(100, 30);
+    h.keys("j");
+    h.enter();
+    h.keys("use egui");
+    ctrl(&mut h, 'w');
+    assert_eq!(h.app.tabs.len(), 1, "the tab stays");
+    assert_eq!(h.app.tabs[0].tab.drafts.get("d1").map(String::as_str), Some("use "));
+}

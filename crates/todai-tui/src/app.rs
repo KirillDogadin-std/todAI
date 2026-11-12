@@ -9,7 +9,9 @@ use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::layout::{Position, Rect};
+use todai_client::boardlist::{self, Action, BoardList};
 use todai_client::follow::Follows;
+use todai_client::{manage, tracked};
 use todai_client::ipc::{Incoming, Reply, Request};
 use todai_client::nav::{Env, Focus, FocusRequest, Input, Key, Mode, Mods, Outcome};
 use todai_client::session::Session;
@@ -59,10 +61,22 @@ pub struct App {
     saved: Session,
     /// Persist tabs across runs (off in tests).
     persist: bool,
+    /// Tests: the tracked boards, instead of the user's tracked file.
+    pub test_tracked: Option<Vec<PathBuf>>,
+    /// Tests: a trash folder, instead of the user's desktop trash.
+    pub test_trash: Option<PathBuf>,
     wake: Wake,
     pub(crate) follows: Follows,
     /// Text to put on the terminal's clipboard after the next draw (`y`).
     pub clipboard: Option<String>,
+    /// The board list, while open.
+    pub boards: Option<BoardList>,
+    /// Rows of the board list drawn this frame: (screen row, board), for clicks.
+    pub board_hits: Vec<(u16, PathBuf)>,
+    /// A board-list action waiting for "are you sure".
+    pub confirm_boards: Option<Action>,
+    /// A tab whose closing waits for "are you sure".
+    pub confirm_close: Option<usize>,
 }
 
 impl App {
@@ -80,9 +94,15 @@ impl App {
             requests,
             saved: Session::default(),
             persist,
+            test_tracked: None,
+            test_trash: None,
             wake,
             follows: Follows::default(),
             clipboard: None,
+            boards: None,
+            board_hits: Vec::new(),
+            confirm_boards: None,
+            confirm_close: None,
         }
     }
 
@@ -224,12 +244,131 @@ impl App {
         }
     }
 
+    /// Closes tab `i`, asking first if items wait for you or you started
+    /// an answer there.
     fn close_tab(&mut self, i: usize) {
+        let Some(o) = self.tabs.get(i) else { return };
+        if waiting(&o.tab) > 0 || o.tab.drafts.values().any(|d| !d.trim().is_empty()) {
+            self.confirm_close = Some(i);
+        } else {
+            self.close_tab_now(i);
+        }
+    }
+
+    pub fn close_tab_now(&mut self, i: usize) {
         if i < self.tabs.len() {
             self.tabs.remove(i);
             if self.active > i || self.active >= self.tabs.len() {
                 self.active = self.active.saturating_sub(1);
             }
+        }
+    }
+
+    fn open_locations(&self) -> Vec<Location> {
+        self.tabs.iter().map(|o| o.tab.location.clone()).collect()
+    }
+
+    /// Opens (or closes) the board list over `paths`; `tracked::list()` in
+    /// the real app.
+    pub fn toggle_boards(&mut self) {
+        self.boards = match self.boards {
+            Some(_) => None,
+            None => Some(BoardList::new(&self.tracked(), &self.open_locations(), boardlist::now_ms())),
+        };
+    }
+
+    /// The tracked boards; tests set `test_tracked` instead of touching the
+    /// user's state.
+    fn tracked(&self) -> Vec<PathBuf> {
+        match &self.test_tracked {
+            Some(paths) => paths.iter().filter(|p| p.is_file()).cloned().collect(),
+            None => tracked::list(),
+        }
+    }
+
+    fn reload_boards(&mut self) {
+        let (paths, open) = (self.tracked(), self.open_locations());
+        if let Some(list) = &mut self.boards {
+            list.reload(&paths, &open, boardlist::now_ms());
+        }
+    }
+
+    fn close_tabs_of(&mut self, path: &std::path::Path) {
+        while let Some(i) = self.tabs.iter().position(|o| matches!(&o.tab.location, Location::File(p) if p == path)) {
+            self.close_tab_now(i);
+        }
+    }
+
+    fn track(&mut self, path: &std::path::Path) {
+        match &mut self.test_tracked {
+            Some(paths) => paths.push(path.to_owned()),
+            None => tracked::track(path),
+        }
+    }
+
+    pub fn board_action(&mut self, action: Action) {
+        let notice = match action {
+            Action::Close => {
+                self.boards = None;
+                return;
+            }
+            Action::Open(loc) => {
+                self.open_or_focus(loc);
+                self.boards = None;
+                return;
+            }
+            Action::Delete(_) | Action::ArchiveStale(_) => {
+                self.confirm_boards = Some(action);
+                return;
+            }
+            Action::ToggleArchive(paths) => self.toggle_archive(&paths),
+            Action::Create { dir, name } => match manage::create(&dir, &name) {
+                Ok(path) => {
+                    self.track(&path);
+                    let at = self.active;
+                    self.open(Location::File(path));
+                    self.active = at.min(self.tabs.len().saturating_sub(1));
+                    boardlist::created_notice(&name)
+                }
+                Err(e) => format!("{e:#}"),
+            },
+        };
+        self.reload_boards();
+        if let Some(list) = &mut self.boards {
+            list.notice = Some(notice);
+        }
+    }
+
+    fn toggle_archive(&mut self, paths: &[PathBuf]) -> String {
+        let track = self.test_tracked.is_none();
+        let msg = manage::toggle_archive_all(paths, track, |p| self.close_tabs_of(p));
+        if let Some(t) = &mut self.test_tracked {
+            // What tracking would have recorded: the boards' new places.
+            for p in paths {
+                let other = if manage::is_archived(p) {
+                    manage::boards_dir(p).join(p.file_name().unwrap())
+                } else {
+                    p.parent().unwrap().join("archive").join(p.file_name().unwrap())
+                };
+                t.push(other);
+            }
+        }
+        msg
+    }
+
+    /// Carries out a confirmed delete / archive-stale.
+    fn confirmed(&mut self, action: Action) {
+        let notice = match action {
+            Action::Delete(paths) => {
+                let trash = self.test_trash.clone().or_else(manage::home_trash);
+                manage::delete_all(&paths, trash.as_deref(), |p| self.close_tabs_of(p))
+            }
+            Action::ArchiveStale(paths) => self.toggle_archive(&paths),
+            _ => return,
+        };
+        self.reload_boards();
+        if let Some(list) = &mut self.boards {
+            list.notice = Some(notice);
         }
     }
 
@@ -270,6 +409,24 @@ impl App {
         let no = matches!(k.code, KeyCode::Esc | KeyCode::Char('n'));
 
         // Dialogs own the keyboard while shown.
+        if let Some(i) = self.confirm_close {
+            if yes {
+                self.confirm_close = None;
+                self.close_tab_now(i);
+            } else if no {
+                self.confirm_close = None;
+            }
+            return;
+        }
+        if let Some(action) = self.confirm_boards.clone() {
+            if yes {
+                self.confirm_boards = None;
+                self.confirmed(action);
+            } else if no {
+                self.confirm_boards = None;
+            }
+            return;
+        }
         if self.confirm_quit {
             if yes {
                 self.quit = true;
@@ -305,10 +462,34 @@ impl App {
             return;
         }
 
+        // The board list owns the keyboard while open.
+        if let Some(list) = &mut self.boards {
+            match k.code {
+                KeyCode::Char('o') if ctrl => self.boards = None,
+                KeyCode::Char('q' | 'c') if ctrl => self.confirm_quit = true,
+                KeyCode::Char('?') | KeyCode::F(1) if list.naming.is_none() && !list.filtering => {
+                    self.cheatsheet = Some(0);
+                }
+                KeyCode::Backspace => list.backspace(),
+                _ => {
+                    if let Some(a) = input(&k).and_then(|i| list.input(&i, true)) {
+                        self.board_action(a);
+                    }
+                }
+            }
+            return;
+        }
+
         // Anywhere.
+        let typing = self
+            .tabs
+            .get(self.active)
+            .is_some_and(|o| o.edit.is_some() && matches!(o.tab.nav.mode, Mode::Insert | Mode::Prompt));
         match k.code {
             KeyCode::Char('q' | 'c') if ctrl => return self.confirm_quit = true,
-            KeyCode::Char('w') if ctrl => return self.close_tab(self.active),
+            // While typing, Ctrl+W deletes a word (as in a shell): see edit.rs.
+            KeyCode::Char('w') if ctrl && !typing => return self.close_tab(self.active),
+            KeyCode::Char('o') if ctrl => return self.toggle_boards(),
             KeyCode::Char(c @ '1'..='9') if alt => {
                 let i = c as usize - '1' as usize;
                 if i < self.tabs.len() {
@@ -320,6 +501,10 @@ impl App {
             _ => {}
         }
         let Some(o) = self.tabs.get_mut(self.active) else {
+            if k.code == KeyCode::Char('g') {
+                // `gb` with no tab open: the list is how you open one.
+                return self.toggle_boards();
+            }
             if matches!(k.code, KeyCode::Char('q' | '?')) {
                 if k.code == KeyCode::Char('q') {
                     self.confirm_quit = true;
@@ -366,6 +551,7 @@ impl App {
         if let Some(ids) = out.trash {
             o.tab.confirm_trash = Some(ids);
         }
+        let open_boards = out.open_boards;
         if let Some(text) = out.copy {
             self.notice = Some(format!("copied {} characters", text.chars().count()));
             self.clipboard = Some(text);
@@ -374,10 +560,29 @@ impl App {
             ui::app_send(o, kind);
         }
         self.step_tab(out.tab_step);
+        if open_boards && self.boards.is_none() {
+            self.toggle_boards();
+        }
     }
 
     fn on_mouse(&mut self, m: MouseEvent) {
         let pos = (m.column, m.row);
+        if let Some(list) = &mut self.boards {
+            // Over the list: the wheel moves the cursor, a click opens a row.
+            let a = match m.kind {
+                MouseEventKind::ScrollDown => list.input(&Input::Key { key: Key::Down, pressed: true, mods: Mods::default() }, true),
+                MouseEventKind::ScrollUp => list.input(&Input::Key { key: Key::Up, pressed: true, mods: Mods::default() }, true),
+                MouseEventKind::Down(MouseButton::Left) if self.confirm_boards.is_none() && !self.confirm_quit => {
+                    let row = self.board_hits.iter().find(|(y, _)| *y == m.row).map(|(_, p)| p.clone());
+                    row.map(|p| Action::Open(Location::File(p)))
+                }
+                _ => None,
+            };
+            if let Some(a) = a {
+                self.board_action(a);
+            }
+            return;
+        }
         match m.kind {
             MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
                 let down = m.kind == MouseEventKind::ScrollDown;
@@ -453,6 +658,13 @@ impl App {
             o.edit = None;
         }
     }
+}
+
+/// Decisions and todos waiting for the operator on a tab.
+pub fn waiting(t: &Tab) -> usize {
+    use todai_client::store::DecisionStatus;
+    t.state.decisions.iter().filter(|d| d.status == DecisionStatus::Pending).count()
+        + t.state.todos.iter().filter(|t| t.done.is_none()).count()
 }
 
 /// The text a field edits: a draft (created on first keystroke) or the

@@ -474,7 +474,7 @@ impl App {
                 Ok(path) => {
                     tracked::track(&path);
                     self.open(ctx, Location::File(path));
-                    notice = Some(format!("Created {name}. Have the agent in that project run: todai attach {name}"));
+                    notice = Some(boardlist::created_notice(&name));
                 }
                 Err(e) => notice = Some(format!("{e:#}")),
             },
@@ -486,73 +486,19 @@ impl App {
     }
 
     fn toggle_archive(&mut self, paths: &[PathBuf]) -> String {
-        let (mut done, mut errors) = (Vec::new(), Vec::new());
-        for p in paths {
-            let r = if manage::is_archived(p) {
-                manage::unarchive(p)
-            } else {
-                self.close_tabs_of(p);
-                manage::archive(p)
-            };
-            match r {
-                Ok(to) => {
-                    tracked::track(&to);
-                    done.push(to);
-                }
-                Err(e) => errors.push(format!("{e:#}")),
-            }
-        }
-        let mut msg = match done.as_slice() {
-            [] => String::new(),
-            [one] if manage::is_archived(one) => format!("Archived {}.", file_stem(one)),
-            [one] => format!("Unarchived {}.", file_stem(one)),
-            many => format!("Moved {} boards.", many.len()),
-        };
-        if !errors.is_empty() {
-            msg = format!("{msg} {}", errors.join("; ")).trim().to_owned();
-        }
-        msg
+        manage::toggle_archive_all(paths, true, |p| self.close_tabs_of(p))
     }
 
     /// "Are you sure" for deleting boards and archiving all stale ones.
     fn boards_dialog(&mut self, ctx: &egui::Context) -> bool {
         let Some(action) = self.confirm_boards.clone() else { return false };
-        let (title, body, yes) = match &action {
-            Action::Delete(paths) => {
-                let waiting: usize = paths.iter().map(|p| tracked::Summary::load(p).waiting).sum();
-                let names: Vec<String> = paths.iter().map(|p| file_stem(p)).collect();
-                let title = match paths.len() {
-                    1 => format!("Delete {}?", names[0]),
-                    n => format!("Delete {n} boards?"),
-                };
-                let mut body = format!("{}\nThey go to the trash; restore them from your file manager.", names.join(", "));
-                if waiting > 0 {
-                    body.push_str(&format!("\n{waiting} items still wait for you."));
-                }
-                (title, body, "Delete")
-            }
-            Action::ArchiveStale(paths) => (
-                format!("Archive {} stale boards?", paths.len()),
-                "Nothing waits on them and no agent wrote for a week. Archived boards come back with Unarchive.".to_owned(),
-                "Archive",
-            ),
-            _ => return false,
-        };
+        let Some((title, body, yes)) = boardlist::confirm_text(&action) else { return false };
         match confirm(ctx, "boards", &title, &body, yes) {
             Some(true) => {
                 self.confirm_boards = None;
                 let notice = match action {
                     Action::Delete(paths) => {
-                        let mut out = Vec::new();
-                        for p in &paths {
-                            self.close_tabs_of(p);
-                            out.push(match manage::delete(p) {
-                                Ok(manage::Deleted::Trash(_)) => format!("{} moved to the trash", file_stem(p)),
-                                Ok(manage::Deleted::Folder(to)) => format!("{} moved to {}", file_stem(p), to.display()),
-                                Err(e) => format!("{e:#}"),
-                            });
-                        }
-                        out.join("; ") + "."
+                        manage::delete_all(&paths, manage::home_trash().as_deref(), |p| self.close_tabs_of(p))
                     }
                     Action::ArchiveStale(paths) => self.toggle_archive(&paths),
                     _ => unreachable!(),
@@ -727,10 +673,6 @@ impl App {
 fn waiting(t: &Tab) -> usize {
     t.state.decisions.iter().filter(|d| d.status == DecisionStatus::Pending).count()
         + t.state.todos.iter().filter(|t| t.done.is_none()).count()
-}
-
-fn file_stem(p: &std::path::Path) -> String {
-    p.file_stem().map_or_else(String::new, |s| s.to_string_lossy().into_owned())
 }
 
 /// Index of the active tab after closing tab `closed`, given the count left.

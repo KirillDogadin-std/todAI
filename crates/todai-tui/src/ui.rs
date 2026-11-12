@@ -8,6 +8,9 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use std::path::PathBuf;
+
+use todai_client::boardlist;
 use todai_client::nav::{self, Focus, FocusRequest, Mode};
 use todai_client::store::Kind;
 
@@ -50,6 +53,7 @@ pub const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("v  V", "select text / select all (visual)"),
             ("za  space", "toggle section (zo / zc open / close)"),
             ("gt  gT", "next / previous tab"),
+            ("gb", "board list (also Ctrl+O)"),
         ],
     ),
     (
@@ -78,6 +82,21 @@ pub const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Board list (Ctrl+O, gb)",
+        &[
+            ("j k  gg G", "move (wheel too)"),
+            ("Enter", "open the board (click too)"),
+            ("space", "mark (actions use marks, else the cursor)"),
+            ("/", "filter"),
+            ("a", "archive / unarchive"),
+            ("d", "delete (to the trash, asks first)"),
+            ("n", "new board in this project"),
+            ("S", "archive all stale (asks first)"),
+            (".  s", "show archived / sort by activity"),
+            ("Esc  q", "clear filter, marks, then close"),
+        ],
+    ),
+    (
         "Typing (answers, notes, elaborate message)",
         &[
             ("Enter", "submit"),
@@ -90,7 +109,8 @@ pub const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
         &[
             ("?  F1", "this cheatsheet"),
             ("gt  gT  Alt+1-9", "switch tab"),
-            ("Ctrl+W", "close tab"),
+            ("Ctrl+W", "close tab (asks if items wait or an answer is started); while typing: delete a word"),
+            ("Ctrl+O", "board list"),
             ("q  Ctrl+Q", "quit (asks first; tabs are restored next time)"),
         ],
     ),
@@ -108,15 +128,17 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let mut body = Rect { y: area.y + 1, height: area.height.saturating_sub(2), ..area };
     let status = Rect { y: area.bottom().saturating_sub(1), height: 1, ..area };
 
+    app.board_hits.clear();
     let Some(open) = app.tabs.get_mut(app.active) else {
         status_line(f, app, status);
         let msg = Paragraph::new(vec![
             Line::default(),
             Line::styled("No boards open.", dim()),
-            Line::styled("Run: todai-tui FILE, or attach one from an agent (todai attach).", dim()),
+            Line::styled("Ctrl+O or gb: the board list. Or run todai-tui FILE, or attach one from an agent (todai attach).", dim()),
         ])
         .centered();
         f.render_widget(msg, body);
+        overlays(f, app, area);
         return;
     };
     let tab = &mut open.tab;
@@ -183,8 +205,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     status_line(f, app, status);
     let open = app.tabs.get_mut(app.active).unwrap();
-    let overlay = open.tab.nav.zoom.is_some() || open.tab.confirm_trash.is_some() || app.confirm_quit || app.cheatsheet.is_some();
-    if overlay {
+    if open.tab.nav.zoom.is_some() || open.tab.confirm_trash.is_some() {
         backdrop(f);
     }
     if open.tab.nav.zoom.is_some() {
@@ -198,12 +219,155 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         let body = format!("{}\nThey are gone from the board for good; the agent is not told.", ids.join(", "));
         confirm(f, area, &title, &body, "Enter/y: remove · Esc/n: keep");
     }
+    overlays(f, app, area);
+}
+
+/// What can sit over any screen, a board or none: the board list, its
+/// confirmations, closing a tab, quitting, the cheatsheet.
+fn overlays(f: &mut Frame, app: &mut App, area: Rect) {
+    let any = app.boards.is_some()
+        || app.confirm_boards.is_some()
+        || app.confirm_close.is_some()
+        || app.confirm_quit
+        || app.cheatsheet.is_some();
+    if any {
+        backdrop(f);
+    }
+    if app.boards.is_some() {
+        board_list(f, app, area);
+    }
+    if let Some((title, body, yes)) = app.confirm_boards.as_ref().and_then(boardlist::confirm_text) {
+        confirm(f, area, &title, &body, &format!("Enter/y: {} · Esc/n: cancel", yes.to_lowercase()));
+    }
+    if let Some(o) = app.confirm_close.and_then(|i| app.tabs.get(i)) {
+        let mut why = Vec::new();
+        match crate::app::waiting(&o.tab) {
+            0 => {}
+            1 => why.push("1 item waits for you".to_owned()),
+            n => why.push(format!("{n} items wait for you")),
+        }
+        if o.tab.drafts.values().any(|d| !d.trim().is_empty()) {
+            why.push("an answer you started is lost".to_owned());
+        }
+        let body = format!("{}. The board stays; reopen it from the board list (Ctrl+O).", why.join("; "));
+        confirm(f, area, &format!("Close {}?", o.tab.title()), &body, "Enter/y: close · Esc/n: keep");
+    }
     if app.confirm_quit {
         confirm(f, area, "Quit todai?", "Open tabs come back the next time you run todai-tui.", "Enter/y: quit · Esc/n: stay");
     }
     if let Some(scroll) = app.cheatsheet.as_mut() {
         cheatsheet(f, area, scroll);
     }
+}
+
+/// The board list: the same rows as the window's, one line each.
+fn board_list(f: &mut Frame, app: &mut App, area: Rect) {
+    let Some(list) = &app.boards else { return };
+    let w = 100.min(area.width);
+    let r = centered(area, w, area.height.saturating_sub(2));
+    let inner_w = r.width.saturating_sub(2) as usize;
+    let bold = Style::new().add_modifier(Modifier::BOLD);
+    let mut head: Vec<Line> =
+        vec![Line::styled("Tracked boards: the ones todai opened or an agent attached; others aren't listed.", dim())];
+    if let Some(n) = &list.notice {
+        head.extend(text::wrap_lines(&text::plain_cells(n, Style::new().fg(ACCENT)), inner_w, vec![], vec![]));
+    }
+    head.push(match &list.naming {
+        Some((dir, name)) => {
+            let project = dir.parent().and_then(|d| d.parent()).and_then(|d| d.file_name());
+            let project = project.map_or_else(String::new, |p| p.to_string_lossy().into_owned());
+            Line::from(vec![
+                Span::raw(format!("New board in {project}: ")),
+                Span::styled(format!("{name}▏"), bold),
+                Span::styled("  Enter create · Esc cancel", dim()),
+            ])
+        }
+        None if list.filtering || !list.filter.is_empty() => Line::raw(format!("filter: {}▏", list.filter)),
+        None => {
+            let sort = match list.sort {
+                boardlist::Sort::Project => "by project",
+                boardlist::Sort::Activity => "by activity",
+            };
+            let archived = if list.show_archived { "archived shown" } else { "archived hidden" };
+            Line::styled(format!("/ filter · {sort} (s) · {archived} (.) · {} stale (S)", list.stale().len()), dim())
+        }
+    });
+    head.push(Line::default());
+
+    // Rows, with which line is the cursor's, so it can be scrolled into view.
+    let now = boardlist::now_ms();
+    let mut rows: Vec<(Line, Option<PathBuf>)> = Vec::new();
+    let mut cursor_line = 0;
+    let mut project: Option<String> = None;
+    let visible: Vec<boardlist::Row> = list.visible().into_iter().cloned().collect();
+    if visible.is_empty() {
+        let msg = if list.rows.is_empty() {
+            "No tracked boards yet. They appear once an agent runs `todai attach`, or you run `todai-tui FILE`."
+        } else {
+            "No board matches."
+        };
+        rows.push((Line::styled(msg, dim()), None));
+    }
+    for (i, row) in visible.iter().enumerate() {
+        let s = &row.summary;
+        if list.sort == boardlist::Sort::Project && project.as_deref() != Some(s.project.as_str()) {
+            if project.is_some() {
+                rows.push((Line::default(), None));
+            }
+            project = Some(s.project.clone());
+            rows.push((Line::styled(s.project.clone(), bold), None));
+        }
+        let mark = if list.marked.contains(&s.path) { "[x]" } else { "[ ]" };
+        let mut left = vec![Span::raw(format!(" {mark} "))];
+        if list.sort == boardlist::Sort::Activity {
+            left.push(Span::styled(format!("{} / ", s.project), dim()));
+        }
+        let name_style = if row.archived { dim() } else if row.open { bold } else { Style::new() };
+        left.push(Span::styled(s.name.clone(), name_style));
+        if s.waiting > 0 {
+            left.push(Span::styled(format!("  {} waiting", s.waiting), Style::new().fg(Color::Yellow)));
+        }
+        if s.asked > 0 {
+            left.push(Span::styled(format!("  {} asked", s.asked), dim()));
+        }
+        for (on, badge) in [(row.open, "open"), (row.stale, "stale"), (row.archived, "archived")] {
+            if on {
+                left.push(Span::styled(format!("  {badge}"), dim()));
+            }
+        }
+        let ago = boardlist::ago(now, s.last);
+        let used: usize = left.iter().map(|sp| str_width(&sp.content)).sum();
+        let pad = inner_w.saturating_sub(used + str_width(&ago) + 1);
+        left.push(Span::raw(" ".repeat(pad)));
+        left.push(Span::styled(ago, dim()));
+        let mut line = Line::from(left);
+        if i == list.cursor {
+            line = line.style(Style::new().add_modifier(Modifier::REVERSED));
+            cursor_line = rows.len();
+        }
+        rows.push((line, Some(s.path.clone())));
+    }
+
+    let inner_h = r.height.saturating_sub(2) as usize;
+    let room = inner_h.saturating_sub(head.len()).max(1);
+    let skip = (cursor_line + 1).saturating_sub(room);
+    let top = r.y + 1 + head.len() as u16;
+    let mut lines = head;
+    for (n, (line, path)) in rows.into_iter().skip(skip).take(room).enumerate() {
+        if let Some(p) = path {
+            app.board_hits.push((top + n as u16, p));
+        }
+        lines.push(line);
+    }
+    f.render_widget(Clear, r);
+    let block = Block::bordered()
+        .title(Span::styled(" Boards ", bold))
+        .title_bottom(Span::styled(
+            " Enter open · space mark · a archive · d delete · n new · Esc close · ? keys ",
+            dim(),
+        ))
+        .border_style(Style::new().fg(ACCENT));
+    f.render_widget(Paragraph::new(lines).block(block), r);
 }
 
 /// Sends an action from the board; a sent answer clears its draft.
