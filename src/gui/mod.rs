@@ -1,4 +1,5 @@
 mod board;
+mod boards;
 mod input;
 
 use std::os::unix::net::UnixListener;
@@ -14,7 +15,9 @@ use crate::ipc::{self, Incoming, Reply, Request};
 use crate::session::Session;
 use crate::store::{DecisionStatus, Kind};
 use board::Board;
+use todai_client::boardlist::{Action, BoardList};
 use todai_client::follow::Follows;
+use todai_client::{boardlist, manage, tracked};
 use todai_client::nav::{self, FocusRequest, Mode};
 use todai_client::tab::Tab;
 pub use todai_client::tab::Location;
@@ -54,6 +57,22 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("v  V", "select text / select all (visual)"),
             ("za  space", "toggle section (zo / zc open / close)"),
             ("gt  gT", "next / previous tab"),
+            ("gb", "board list (also Ctrl+O)"),
+        ],
+    ),
+    (
+        "Board list (Ctrl+O, gb)",
+        &[
+            ("j k  gg G", "move"),
+            ("Enter", "open the board"),
+            ("space", "mark (actions use marks, else the cursor)"),
+            ("/", "filter (mouse mode: just type)"),
+            ("a", "archive / unarchive"),
+            ("d", "delete (to the trash, asks first)"),
+            ("n", "new board in this project"),
+            ("S", "archive all stale (asks first)"),
+            (".  s", "show archived / sort by activity"),
+            ("Esc  q", "clear filter, marks, then close"),
         ],
     ),
     (
@@ -92,7 +111,8 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("Ctrl+Shift+M", "vim / mouse mode"),
             ("Ctrl+Shift+L", "dark / light"),
             ("Ctrl+Tab  Ctrl+1-9", "switch tab"),
-            ("Ctrl+W", "close tab"),
+            ("Ctrl+W", "close tab (asks if items wait or an answer is started)"),
+            ("Ctrl+O", "board list"),
             ("Ctrl+Q", "close window (asks first; tabs are restored next time)"),
             ("Ctrl +  Ctrl -", "zoom (also moves the two-column breakpoint)"),
         ],
@@ -140,6 +160,12 @@ struct App {
     requests: mpsc::Receiver<Incoming>,
     saved: Session,
     follows: Follows,
+    /// The board list, while open.
+    boards: Option<BoardList>,
+    /// A board-list action waiting for "are you sure".
+    confirm_boards: Option<Action>,
+    /// A tab whose closing waits for "are you sure" (pending items or a draft).
+    confirm_close: Option<usize>,
 }
 
 impl App {
@@ -166,9 +192,18 @@ impl App {
             requests,
             saved: saved.clone(),
             follows: Follows::default(),
+            boards: None,
+            confirm_boards: None,
+            confirm_close: None,
         };
         // Restore last session, skipping boards that were deleted since.
         for loc in &saved.tabs {
+            if let Location::File(p) = loc
+                && p.exists()
+            {
+                // Boards opened before tracking existed join the list too.
+                todai_client::tracked::track(p);
+            }
             if !matches!(loc, Location::File(p) if !p.exists()) {
                 app.open_or_focus(&cc.egui_ctx, loc.clone());
             }
@@ -331,6 +366,9 @@ impl App {
         if shortcut(Modifiers::COMMAND, Key::W) {
             self.close_tab(self.active);
         }
+        if shortcut(Modifiers::COMMAND, Key::O) {
+            self.toggle_boards();
+        }
         if shortcut(Modifiers::COMMAND, Key::Q) {
             self.confirm_quit = true;
         }
@@ -348,11 +386,186 @@ impl App {
         }
     }
 
+    /// Closes tab `i`, asking first if it holds something you'd lose sight
+    /// of: items waiting for you, or an answer you started typing.
     fn close_tab(&mut self, i: usize) {
+        let Some(t) = self.tabs.get(i) else { return };
+        if waiting(t) > 0 || t.drafts.values().any(|d| !d.trim().is_empty()) {
+            self.confirm_close = Some(i);
+        } else {
+            self.close_tab_now(i);
+        }
+    }
+
+    fn close_tab_now(&mut self, i: usize) {
         if i < self.tabs.len() {
             self.tabs.remove(i);
             self.active = active_after_close(self.active, i, self.tabs.len());
         }
+    }
+
+    fn close_dialog(&mut self, ctx: &egui::Context) -> bool {
+        let Some(i) = self.confirm_close else { return false };
+        let Some(t) = self.tabs.get(i) else {
+            self.confirm_close = None;
+            return false;
+        };
+        let mut why = Vec::new();
+        match waiting(t) {
+            0 => {}
+            1 => why.push("1 item waits for you".to_owned()),
+            n => why.push(format!("{n} items wait for you")),
+        }
+        if t.drafts.values().any(|d| !d.trim().is_empty()) {
+            why.push("an answer you started is lost".to_owned());
+        }
+        let body = format!("{}. The board stays; reopen it from Boards (Ctrl+O).", why.join("; "));
+        match confirm(ctx, "close-tab", &format!("Close {}?", t.title()), &body, "Close tab") {
+            Some(true) => {
+                self.confirm_close = None;
+                self.close_tab_now(i);
+            }
+            Some(false) => self.confirm_close = None,
+            None => {}
+        }
+        true
+    }
+
+    fn open_locations(&self) -> Vec<Location> {
+        self.tabs.iter().map(|t| t.location.clone()).collect()
+    }
+
+    fn toggle_boards(&mut self) {
+        self.boards = match self.boards {
+            Some(_) => None,
+            None => Some(BoardList::new(&tracked::list(), &self.open_locations(), boardlist::now_ms())),
+        };
+    }
+
+    fn reload_boards(&mut self) {
+        let open = self.open_locations();
+        if let Some(list) = &mut self.boards {
+            list.reload(&tracked::list(), &open, boardlist::now_ms());
+        }
+    }
+
+    /// Closes the tabs showing `path` (it is being moved away).
+    fn close_tabs_of(&mut self, path: &std::path::Path) {
+        while let Some(i) = self.tabs.iter().position(|t| matches!(&t.location, Location::File(p) if p == path)) {
+            self.close_tab_now(i);
+        }
+    }
+
+    fn board_action(&mut self, ctx: &egui::Context, action: Action) {
+        let mut notice = None;
+        match action {
+            Action::Close => self.boards = None,
+            Action::Open(loc) => {
+                self.open_or_focus(ctx, loc);
+                self.boards = None;
+                return;
+            }
+            Action::Delete(_) | Action::ArchiveStale(_) => {
+                self.confirm_boards = Some(action);
+                return;
+            }
+            Action::ToggleArchive(paths) => notice = Some(self.toggle_archive(&paths)),
+            Action::Create { dir, name } => match manage::create(&dir, &name) {
+                Ok(path) => {
+                    tracked::track(&path);
+                    self.open(ctx, Location::File(path));
+                    notice = Some(format!("Created {name}. Have the agent in that project run: todai attach {name}"));
+                }
+                Err(e) => notice = Some(format!("{e:#}")),
+            },
+        }
+        self.reload_boards();
+        if let Some(list) = &mut self.boards {
+            list.notice = notice;
+        }
+    }
+
+    fn toggle_archive(&mut self, paths: &[PathBuf]) -> String {
+        let (mut done, mut errors) = (Vec::new(), Vec::new());
+        for p in paths {
+            let r = if manage::is_archived(p) {
+                manage::unarchive(p)
+            } else {
+                self.close_tabs_of(p);
+                manage::archive(p)
+            };
+            match r {
+                Ok(to) => {
+                    tracked::track(&to);
+                    done.push(to);
+                }
+                Err(e) => errors.push(format!("{e:#}")),
+            }
+        }
+        let mut msg = match done.as_slice() {
+            [] => String::new(),
+            [one] if manage::is_archived(one) => format!("Archived {}.", file_stem(one)),
+            [one] => format!("Unarchived {}.", file_stem(one)),
+            many => format!("Moved {} boards.", many.len()),
+        };
+        if !errors.is_empty() {
+            msg = format!("{msg} {}", errors.join("; ")).trim().to_owned();
+        }
+        msg
+    }
+
+    /// "Are you sure" for deleting boards and archiving all stale ones.
+    fn boards_dialog(&mut self, ctx: &egui::Context) -> bool {
+        let Some(action) = self.confirm_boards.clone() else { return false };
+        let (title, body, yes) = match &action {
+            Action::Delete(paths) => {
+                let waiting: usize = paths.iter().map(|p| tracked::Summary::load(p).waiting).sum();
+                let names: Vec<String> = paths.iter().map(|p| file_stem(p)).collect();
+                let title = match paths.len() {
+                    1 => format!("Delete {}?", names[0]),
+                    n => format!("Delete {n} boards?"),
+                };
+                let mut body = format!("{}\nThey go to the trash; restore them from your file manager.", names.join(", "));
+                if waiting > 0 {
+                    body.push_str(&format!("\n{waiting} items still wait for you."));
+                }
+                (title, body, "Delete")
+            }
+            Action::ArchiveStale(paths) => (
+                format!("Archive {} stale boards?", paths.len()),
+                "Nothing waits on them and no agent wrote for a week. Archived boards come back with Unarchive.".to_owned(),
+                "Archive",
+            ),
+            _ => return false,
+        };
+        match confirm(ctx, "boards", &title, &body, yes) {
+            Some(true) => {
+                self.confirm_boards = None;
+                let notice = match action {
+                    Action::Delete(paths) => {
+                        let mut out = Vec::new();
+                        for p in &paths {
+                            self.close_tabs_of(p);
+                            out.push(match manage::delete(p) {
+                                Ok(manage::Deleted::Trash(_)) => format!("{} moved to the trash", file_stem(p)),
+                                Ok(manage::Deleted::Folder(to)) => format!("{} moved to {}", file_stem(p), to.display()),
+                                Err(e) => format!("{e:#}"),
+                            });
+                        }
+                        out.join("; ") + "."
+                    }
+                    Action::ArchiveStale(paths) => self.toggle_archive(&paths),
+                    _ => unreachable!(),
+                };
+                self.reload_boards();
+                if let Some(list) = &mut self.boards {
+                    list.notice = Some(notice);
+                }
+            }
+            Some(false) => self.confirm_boards = None,
+            None => {}
+        }
+        true
     }
 
     /// Confirmation for closing the window. Returns true while it is shown;
@@ -395,13 +608,11 @@ impl App {
     }
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
-        let (mut theme, mut input, mut help, mut close) = (false, false, false, None);
+        let (mut theme, mut input, mut help, mut boards, mut close) = (false, false, false, false, None);
         Panel::top("tabs").show(ui, |ui| {
             ui.horizontal(|ui| {
                 for (i, t) in self.tabs.iter().enumerate() {
-                    let pending = t.state.decisions.iter().filter(|d| d.status == DecisionStatus::Pending).count()
-                        + t.state.todos.iter().filter(|t| t.done.is_none()).count();
-                    let label = match pending {
+                    let label = match waiting(t) {
                         0 => t.title(),
                         n => format!("{}  {n}", t.title()),
                     };
@@ -433,6 +644,7 @@ impl App {
                         .on_hover_text("Input mode. Mouse works in both; vim adds single-key commands. Ctrl+Shift+M")
                         .clicked();
                     help = ui.small_button("?").on_hover_text("Keyboard cheatsheet (? or F1)").clicked();
+                    boards = ui.small_button("Boards").on_hover_text("Tracked boards: open, create, archive, delete (Ctrl+O, gb)").clicked();
                 });
             });
         });
@@ -447,6 +659,9 @@ impl App {
         }
         if help {
             self.cheatsheet = !self.cheatsheet;
+        }
+        if boards {
+            self.toggle_boards();
         }
     }
 
@@ -494,7 +709,7 @@ impl App {
                     if columns == 2 {
                         ui.columns(2, |cols| {
                             for (i, (title, rows)) in CHEATSHEET.iter().enumerate() {
-                                section(&mut cols[usize::from(i >= 2)], title, rows);
+                                section(&mut cols[usize::from(i >= 3)], title, rows);
                             }
                         });
                     } else {
@@ -506,6 +721,16 @@ impl App {
             });
         self.cheatsheet = open;
     }
+}
+
+/// Decisions and todos waiting for the operator on a tab.
+fn waiting(t: &Tab) -> usize {
+    t.state.decisions.iter().filter(|d| d.status == DecisionStatus::Pending).count()
+        + t.state.todos.iter().filter(|t| t.done.is_none()).count()
+}
+
+fn file_stem(p: &std::path::Path) -> String {
+    p.file_stem().map_or_else(String::new, |s| s.to_string_lossy().into_owned())
 }
 
 /// Index of the active tab after closing tab `closed`, given the count left.
@@ -535,9 +760,17 @@ impl eframe::App for App {
         self.shortcuts(&ctx);
 
         let vim = self.vim();
-        let dialog = self.quit_dialog(&ctx) || self.trash_dialog(&ctx);
+        let dialog = self.quit_dialog(&ctx)
+            || self.trash_dialog(&ctx)
+            || self.close_dialog(&ctx)
+            || self.boards_dialog(&ctx);
         let mut outcome = None;
-        if !dialog && let Some(tab) = self.tabs.get_mut(self.active) {
+        if !dialog && let Some(list) = &mut self.boards {
+            // The board list owns the keyboard while open.
+            if let Some(a) = input::handle_boards(&ctx, list, vim) {
+                self.board_action(&ctx, a);
+            }
+        } else if !dialog && let Some(tab) = self.tabs.get_mut(self.active) {
             outcome = Some(input::handle(&ctx, tab, vim));
         }
         if let Some(o) = &outcome {
@@ -553,12 +786,20 @@ impl eframe::App for App {
             if let (Some(ids), Some(tab)) = (&o.trash, self.tabs.get_mut(self.active)) {
                 tab.confirm_trash = Some(ids.clone());
             }
+            if o.open_boards && self.boards.is_none() {
+                self.toggle_boards();
+            }
             self.step_tab(o.tab_step);
         }
 
         self.top_bar(ui);
         if self.cheatsheet {
             self.cheatsheet(&ctx);
+        }
+        if let Some(list) = &mut self.boards
+            && let Some(a) = boards::show(&ctx, list, vim)
+        {
+            self.board_action(&ctx, a);
         }
 
         let Some(tab) = self.tabs.get_mut(self.active) else {

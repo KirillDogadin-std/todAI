@@ -63,6 +63,7 @@ fn main() -> Result<()> {
     };
     for f in &files {
         todai_client::remote::register_local(f);
+        todai_client::tracked::track(f);
     }
 
     let (tx, rx) = mpsc::channel::<Msg>();

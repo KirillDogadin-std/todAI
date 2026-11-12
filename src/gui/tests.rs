@@ -644,3 +644,109 @@ fn hack_backs_up_body_text_after_the_system_font() {
     assert!(super::load_font("/nonexistent".into()).is_none());
     assert!(super::load_font(file!().into()).is_none(), "a file that isn't a font is skipped");
 }
+
+/// The board list overlay on its own: keys through `input::handle_boards`
+/// (as `App::ui` feeds it) and what it draws.
+mod boards {
+    use super::*;
+    use todai_client::boardlist::{Action, BoardList};
+    use todai_client::tab::Location;
+
+    struct ListHarness {
+        ctx: egui::Context,
+        list: BoardList,
+        vim: bool,
+        _dir: tempfile::TempDir,
+        paths: Vec<std::path::PathBuf>,
+    }
+
+    impl ListHarness {
+        fn new() -> ListHarness {
+            let dir = tempfile::tempdir().unwrap();
+            let paths: Vec<_> = ["alpha/main", "alpha/docs", "beta/release"]
+                .iter()
+                .map(|p| {
+                    let (proj, name) = p.split_once('/').unwrap();
+                    let path = dir.path().join(proj).join(".agents/todai").join(format!("{name}.jsonl"));
+                    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                    Log::new(path.clone())
+                        .append(Actor::Agent, |_| Ok(Kind::TodoAdd { id: "t1".into(), title: "x".into(), context: None }))
+                        .unwrap();
+                    path
+                })
+                .collect();
+            let list = BoardList::new(&paths, &[], todai_client::boardlist::now_ms());
+            ListHarness { ctx: egui::Context::default(), list, vim: true, _dir: dir, paths }
+        }
+
+        /// One frame: input as the window handles it, then the overlay drawn.
+        fn frame(&mut self, events: Vec<Event>) -> Option<Action> {
+            let raw = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 700.0))),
+                events,
+                ..Default::default()
+            };
+            let (list, vim) = (&mut self.list, self.vim);
+            let mut action = None;
+            let mut once = true;
+            let _ = self.ctx.run_ui(raw, |ui| {
+                if std::mem::take(&mut once) {
+                    action = super::super::input::handle_boards(ui.ctx(), list, vim);
+                }
+                if let Some(a) = super::super::boards::show(ui.ctx(), list, vim) {
+                    action = Some(a);
+                }
+            });
+            action
+        }
+
+        fn text(&mut self, s: &str) -> Option<Action> {
+            self.frame(vec![Event::Text(s.into())])
+        }
+
+        fn key(&mut self, key: Key) -> Option<Action> {
+            let ev = |pressed| Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: Modifiers::NONE };
+            self.frame(vec![ev(true), ev(false)])
+        }
+    }
+
+    #[test]
+    fn keys_move_filter_and_open() {
+        let mut h = ListHarness::new();
+        assert_eq!(h.frame(vec![]), None, "draws without acting");
+        // Sorted by project, then name: alpha/docs, alpha/main, beta/release.
+        h.text("j");
+        assert_eq!(h.key(Key::Enter), Some(Action::Open(Location::File(h.paths[0].clone()))));
+        h.text("/");
+        h.text("rel");
+        h.key(Key::Backspace);
+        assert_eq!(h.list.filter, "re");
+        h.key(Key::Enter);
+        assert_eq!(h.key(Key::Enter), Some(Action::Open(Location::File(h.paths[2].clone()))));
+        assert_eq!(h.key(Key::Escape), None, "first Esc clears the filter");
+        assert_eq!(h.key(Key::Escape), Some(Action::Close));
+    }
+
+    #[test]
+    fn marks_archive_delete_and_new() {
+        let mut h = ListHarness::new();
+        h.text(" ");
+        h.text("j");
+        h.text(" ");
+        assert_eq!(h.text("d"), Some(Action::Delete(vec![h.paths[1].clone(), h.paths[0].clone()])));
+        assert_eq!(h.text("a"), Some(Action::ToggleArchive(vec![h.paths[1].clone(), h.paths[0].clone()])));
+        h.text("n");
+        h.text("notes");
+        let dir = h.paths[0].parent().unwrap().to_owned();
+        assert_eq!(h.key(Key::Enter), Some(Action::Create { dir, name: "notes".into() }));
+    }
+
+    #[test]
+    fn mouse_mode_types_into_the_filter() {
+        let mut h = ListHarness::new();
+        h.vim = false;
+        assert_eq!(h.text("d"), None, "a letter filters instead of deleting");
+        assert_eq!(h.list.filter, "d");
+        assert_eq!(h.list.visible().len(), 1, "alpha/docs");
+    }
+}

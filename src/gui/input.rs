@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use egui::text::CCursor;
 use egui::{Event, Galley};
+use todai_client::boardlist::{Action, BoardList};
 use todai_client::nav::{Env, Input, Key, Mods, Outcome, Rows};
 use todai_client::tab::{Tab, Wake};
 
@@ -34,6 +35,29 @@ pub fn handle(ctx: &egui::Context, tab: &mut Tab, vim: bool) -> Outcome {
         });
     }
     out
+}
+
+/// Feeds this frame's keys to the open board list. It owns the keyboard
+/// while open, so every key and text event is consumed.
+pub fn handle_boards(ctx: &egui::Context, list: &mut BoardList, vim: bool) -> Option<Action> {
+    let events = ctx.input(|i| i.events.clone());
+    let mut action = None;
+    let mut keep = Vec::with_capacity(events.len());
+    for ev in events {
+        match &ev {
+            Event::Key { key: egui::Key::Backspace, pressed: true, .. } => list.backspace(),
+            Event::Key { .. } | Event::Text(_) => {
+                if let Some(i) = input(&ev)
+                    && let Some(a) = list.input(&i, vim)
+                {
+                    action = Some(a);
+                }
+            }
+            _ => keep.push(ev),
+        }
+    }
+    ctx.input_mut(|i| i.events = keep);
+    action
 }
 
 fn input(ev: &Event) -> Option<Input> {

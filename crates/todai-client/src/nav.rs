@@ -149,6 +149,8 @@ pub struct Outcome {
     pub leave_input: bool,
     /// Text to put on the clipboard (`y` in visual mode).
     pub copy: Option<String>,
+    /// Open the board list (`gb`).
+    pub open_boards: bool,
 }
 
 pub struct Nav {
@@ -482,6 +484,7 @@ impl Nav {
             match (p, c) {
                 ('g', 'g') => self.jump_edge(false),
                 ('g', 't') => out.tab_step = 1,
+                ('g', 'b') => out.open_boards = true,
                 ('g', 'T') => out.tab_step = -1,
                 // On an elaboration, z-commands fold the elaboration itself.
                 ('z', 'a' | 'o' | 'c') if matches!(self.cursor, Some(Focus::Elab(_))) => {

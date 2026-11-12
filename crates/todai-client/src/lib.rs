@@ -4,15 +4,18 @@
 //! (`src/gui`) and the TUI (`crates/todai-tui`) translate their input events
 //! into `nav::Input` and draw from the same state.
 
+pub mod boardlist;
 pub mod cardtext;
 pub mod config;
 pub mod follow;
 pub mod ipc;
+pub mod manage;
 pub mod nav;
 pub mod notify;
 pub mod remote;
 pub mod session;
 pub mod tab;
 pub mod textnav;
+pub mod tracked;
 
 pub use todai_core::store;

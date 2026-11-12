@@ -174,6 +174,7 @@ pub fn run(cli: Cli) -> Result<()> {
             let files = files.iter().map(std::path::absolute).collect::<std::io::Result<Vec<_>>>()?;
             for f in &files {
                 crate::remote::register_local(f);
+                todai_client::tracked::track(f);
             }
             if foreground {
                 gui_main(files)?;
@@ -188,6 +189,7 @@ pub fn run(cli: Cli) -> Result<()> {
             std::fs::create_dir_all(path.parent().unwrap())?;
             std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
             crate::remote::register_local(&path);
+            todai_client::tracked::track(&path);
             if !no_window && let Err(e) = open(vec![path.clone()]) {
                 eprintln!("todai: could not open the window ({e:#}); the board still works");
             }

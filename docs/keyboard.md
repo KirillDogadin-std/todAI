@@ -34,6 +34,7 @@ The status bar shows the current state: `NORMAL`, `INSERT`, `VISUAL`,
 | `v` · `V` | select text in the item (visual mode) / select all of it |
 | `za` · `space` | toggle the section (`zo` open, `zc` close) |
 | `gt` · `gT` | next / previous tab |
+| `gb` | the board list (also `Ctrl+O`) |
 
 ## Visual mode (selecting text)
 
@@ -86,9 +87,32 @@ Answer fields, todo notes and the elaboration message:
 | `Ctrl+Shift+M` | vim ↔ mouse mode |
 | `Ctrl+Shift+L` | dark ↔ light theme |
 | `Ctrl+Tab` · `Ctrl+Shift+Tab` · `Ctrl+1`–`9` | switch tab |
-| `Ctrl+W` | close the tab (also its `×`) |
+| `Ctrl+W` | close the tab (also its `×`); asks first if items wait for you or you started an answer |
+| `Ctrl+O` | the board list (also `gb`, and **Boards** in the top bar) |
 | `Ctrl+Q` | close the window, after confirming (`Enter`/`y`, `Esc`/`n`); closing it from the compositor asks too; tabs are restored next time |
 | `Ctrl +` · `Ctrl -` | zoom; also moves the two-column breakpoint |
+
+## Board list
+
+Every tracked board, grouped by project: the boards todai opened or an
+agent attached (boards never opened through todai aren't listed). Each row
+shows what waits for you, elaborations you asked for, last activity, and
+`open` / `stale` / `archived` badges. A board is **stale** when nothing
+waits on it and no agent wrote for 7 days. It owns the keyboard while open.
+
+| Keys | Action |
+|---|---|
+| `j` `k` · `Down` `Up` · `gg` `G` | move |
+| `Enter` · click the name | open the board (or switch to its tab) |
+| `space` · checkbox | mark (actions apply to marked boards, else the one under the cursor) |
+| `/` | filter by name or project; in mouse mode just type. `Enter` keeps it, `Esc` clears it |
+| `a` | archive (moves the file to `.agents/todai/archive/`); on an archived board, unarchive |
+| `d` | delete: moves the file to the trash, after asking |
+| `n` | new empty board in the selected board's project; type a name, `Enter`. The agent then runs `todai attach NAME` |
+| `S` | archive every stale board, after asking |
+| `.` | show / hide archived boards |
+| `s` | sort by project / by last activity |
+| `Esc` · `q` · `Ctrl+O` | clear the filter, then the marks, then close |
 
 ## Mouse
 

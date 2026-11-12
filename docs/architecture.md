@@ -52,6 +52,7 @@ of the server, client and TUI (CI checks too).
 | `crates/todai-client/src/remote.rs` | HTTP client for the server; saved tokens; registering boards with a local server |
 | `crates/todai-client/src/ipc.rs` | single-instance socket: bind / take over a stale socket, request and reply |
 | `crates/todai-client/src/session.rs`, `config.rs` | open tabs (one file per frontend), restored at startup; theme and input mode |
+| `crates/todai-client/src/tracked.rs`, `manage.rs`, `boardlist.rs` | the board list: the tracked-boards index (append-only `$XDG_STATE_HOME/todai/tracked`) and per-board summaries; archive / unarchive / delete-to-trash / create as whole-file moves; the list's rows, filter, marks and keys, drawn by `src/gui/boards.rs` |
 | `crates/todai-client/src/follow.rs` | followed servers: a thread per server re-lists its boards every 15 s; new ones open as tabs |
 | `src/gui/` | the window: `mod.rs` (app, tabs, panels, dialogs, cheatsheet), `board.rs` (rendering), `input.rs` (egui events → `nav::Input`) |
 | `crates/todai-tui/src/` | the terminal board: `app.rs` (tabs, socket, key routing), `ui.rs` (frame, overlays, cheatsheet), `board.rs` (cards as lines), `markdown.rs`, `text.rs` (wrapping), `edit.rs` (the field being typed into) |
