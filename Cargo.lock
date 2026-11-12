@@ -3209,7 +3209,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "todai"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3229,7 +3229,7 @@ dependencies = [
 
 [[package]]
 name = "todai-client"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -3245,7 +3245,7 @@ dependencies = [
 
 [[package]]
 name = "todai-core"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -3255,7 +3255,7 @@ dependencies = [
 
 [[package]]
 name = "todai-memory"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "rusqlite",
@@ -3268,7 +3268,7 @@ dependencies = [
 
 [[package]]
 name = "todai-server"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3284,7 +3284,7 @@ dependencies = [
 
 [[package]]
 name = "todai-tui"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",
