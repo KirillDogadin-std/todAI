@@ -367,7 +367,7 @@ impl App {
             self.close_tab(self.active);
         }
         if shortcut(Modifiers::COMMAND, Key::O) {
-            self.toggle_boards();
+            self.toggle_boards(ctx);
         }
         if shortcut(Modifiers::COMMAND, Key::Q) {
             self.confirm_quit = true;
@@ -435,10 +435,16 @@ impl App {
         self.tabs.iter().map(|t| t.location.clone()).collect()
     }
 
-    fn toggle_boards(&mut self) {
+    /// Opens the board list (local boards at once, servers' in the
+    /// background), or closes it.
+    fn toggle_boards(&mut self, ctx: &egui::Context) {
         self.boards = match self.boards {
             Some(_) => None,
-            None => Some(BoardList::new(&tracked::list(), &self.open_locations(), boardlist::now_ms())),
+            None => {
+                let mut list = BoardList::new(&tracked::list(), &self.open_locations(), boardlist::now_ms());
+                list.fetch(&crate::remote::saved_servers(), input::wake(ctx));
+                Some(list)
+            }
         };
     }
 
@@ -449,9 +455,9 @@ impl App {
         }
     }
 
-    /// Closes the tabs showing `path` (it is being moved away).
-    fn close_tabs_of(&mut self, path: &std::path::Path) {
-        while let Some(i) = self.tabs.iter().position(|t| matches!(&t.location, Location::File(p) if p == path)) {
+    /// Closes the tabs showing `loc` (it is being moved away).
+    fn close_tabs_of(&mut self, loc: &Location) {
+        while let Some(i) = self.tabs.iter().position(|t| t.location.same(loc)) {
             self.close_tab_now(i);
         }
     }
@@ -469,11 +475,14 @@ impl App {
                 self.confirm_boards = Some(action);
                 return;
             }
-            Action::ToggleArchive(paths) => notice = Some(self.toggle_archive(&paths)),
-            Action::Create { dir, name } => match manage::create(&dir, &name) {
-                Ok(path) => {
-                    tracked::track(&path);
-                    self.open(ctx, Location::File(path));
+            Action::ToggleArchive(rows) => notice = Some(self.toggle_archive(ctx, &rows)),
+            Action::Create { next_to, name } => match boardlist::create(&next_to, &name) {
+                Ok(loc) => {
+                    match &loc {
+                        Location::File(path) => tracked::track(path),
+                        Location::Remote { server, .. } => self.refetch(ctx, [server.clone()].into()),
+                    }
+                    self.open(ctx, loc);
                     notice = Some(boardlist::created_notice(&name));
                 }
                 Err(e) => notice = Some(format!("{e:#}")),
@@ -485,8 +494,23 @@ impl App {
         }
     }
 
-    fn toggle_archive(&mut self, paths: &[PathBuf]) -> String {
-        manage::toggle_archive_all(paths, true, |p| self.close_tabs_of(p))
+    /// Archives (unarchives) rows, local or remote; their tabs close first.
+    fn toggle_archive(&mut self, ctx: &egui::Context, rows: &[boardlist::Row]) -> String {
+        for r in rows.iter().filter(|r| r.host.is_some()) {
+            self.close_tabs_of(&r.location());
+        }
+        let (msg, refetch) = boardlist::archive_all(rows, true, |p| self.close_tabs_of(&Location::File(p.to_owned())));
+        self.refetch(ctx, refetch);
+        msg
+    }
+
+    /// Lists these servers' boards again, after acting on them.
+    fn refetch(&mut self, ctx: &egui::Context, servers: boardlist::Refetch) {
+        if let Some(list) = &mut self.boards
+            && !servers.is_empty()
+        {
+            list.fetch(&servers.into_iter().collect::<Vec<_>>(), input::wake(ctx));
+        }
     }
 
     /// "Are you sure" for deleting boards and archiving all stale ones.
@@ -497,10 +521,10 @@ impl App {
             Some(true) => {
                 self.confirm_boards = None;
                 let notice = match action {
-                    Action::Delete(paths) => {
-                        manage::delete_all(&paths, manage::home_trash().as_deref(), |p| self.close_tabs_of(p))
-                    }
-                    Action::ArchiveStale(paths) => self.toggle_archive(&paths),
+                    Action::Delete(rows) => boardlist::delete_all(&rows, manage::home_trash().as_deref(), |p| {
+                        self.close_tabs_of(&Location::File(p.to_owned()))
+                    }),
+                    Action::ArchiveStale(rows) => self.toggle_archive(ctx, &rows),
                     _ => unreachable!(),
                 };
                 self.reload_boards();
@@ -607,7 +631,7 @@ impl App {
             self.cheatsheet = !self.cheatsheet;
         }
         if boards {
-            self.toggle_boards();
+            self.toggle_boards(ui.ctx());
         }
     }
 
@@ -729,7 +753,7 @@ impl eframe::App for App {
                 tab.confirm_trash = Some(ids.clone());
             }
             if o.open_boards && self.boards.is_none() {
-                self.toggle_boards();
+                self.toggle_boards(&ctx);
             }
             self.step_tab(o.tab_step);
         }
@@ -737,6 +761,10 @@ impl eframe::App for App {
         self.top_bar(ui);
         if self.cheatsheet {
             self.cheatsheet(&ctx);
+        }
+        if let Some(list) = &mut self.boards {
+            // Servers' boards arrive in the background.
+            list.poll();
         }
         if let Some(list) = &mut self.boards
             && let Some(a) = boards::show(&ctx, list, vim)

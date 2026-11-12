@@ -72,7 +72,7 @@ pub struct App {
     /// The board list, while open.
     pub boards: Option<BoardList>,
     /// Rows of the board list drawn this frame: (screen row, board), for clicks.
-    pub board_hits: Vec<(u16, PathBuf)>,
+    pub board_hits: Vec<(u16, Location)>,
     /// A board-list action waiting for "are you sure".
     pub confirm_boards: Option<Action>,
     /// A tab whose closing waits for "are you sure".
@@ -169,6 +169,10 @@ impl App {
     pub fn tick(&mut self) {
         self.serve_requests();
         self.follow_servers();
+        if let Some(list) = &mut self.boards {
+            // Servers' boards arrive in the background.
+            list.poll();
+        }
         for o in &mut self.tabs {
             o.tab.reload_if_dirty();
         }
@@ -270,11 +274,28 @@ impl App {
 
     /// Opens (or closes) the board list over `paths`; `tracked::list()` in
     /// the real app.
+    /// Opens the board list (local boards at once, servers' in the
+    /// background; not in tests), or closes it.
     pub fn toggle_boards(&mut self) {
         self.boards = match self.boards {
             Some(_) => None,
-            None => Some(BoardList::new(&self.tracked(), &self.open_locations(), boardlist::now_ms())),
+            None => {
+                let mut list = BoardList::new(&self.tracked(), &self.open_locations(), boardlist::now_ms());
+                if self.test_tracked.is_none() {
+                    list.fetch(&todai_client::remote::saved_servers(), self.wake.clone());
+                }
+                Some(list)
+            }
         };
+    }
+
+    /// Lists these servers' boards again, after acting on them.
+    fn refetch(&mut self, servers: boardlist::Refetch) {
+        if let Some(list) = &mut self.boards
+            && !servers.is_empty()
+        {
+            list.fetch(&servers.into_iter().collect::<Vec<_>>(), self.wake.clone());
+        }
     }
 
     /// The tracked boards; tests set `test_tracked` instead of touching the
@@ -293,8 +314,8 @@ impl App {
         }
     }
 
-    fn close_tabs_of(&mut self, path: &std::path::Path) {
-        while let Some(i) = self.tabs.iter().position(|o| matches!(&o.tab.location, Location::File(p) if p == path)) {
+    fn close_tabs_of(&mut self, loc: &Location) {
+        while let Some(i) = self.tabs.iter().position(|o| o.tab.location.same(loc)) {
             self.close_tab_now(i);
         }
     }
@@ -321,12 +342,15 @@ impl App {
                 self.confirm_boards = Some(action);
                 return;
             }
-            Action::ToggleArchive(paths) => self.toggle_archive(&paths),
-            Action::Create { dir, name } => match manage::create(&dir, &name) {
-                Ok(path) => {
-                    self.track(&path);
+            Action::ToggleArchive(rows) => self.toggle_archive(&rows),
+            Action::Create { next_to, name } => match boardlist::create(&next_to, &name) {
+                Ok(loc) => {
+                    match &loc {
+                        Location::File(path) => self.track(path),
+                        Location::Remote { server, .. } => self.refetch([server.clone()].into()),
+                    }
                     let at = self.active;
-                    self.open(Location::File(path));
+                    self.open(loc);
                     self.active = at.min(self.tabs.len().saturating_sub(1));
                     boardlist::created_notice(&name)
                 }
@@ -339,11 +363,21 @@ impl App {
         }
     }
 
-    fn toggle_archive(&mut self, paths: &[PathBuf]) -> String {
+    /// Archives (unarchives) rows, local or remote; their tabs close first.
+    fn toggle_archive(&mut self, rows: &[boardlist::Row]) -> String {
+        for r in rows.iter().filter(|r| r.host.is_some()) {
+            self.close_tabs_of(&r.location());
+        }
         let track = self.test_tracked.is_none();
-        let msg = manage::toggle_archive_all(paths, track, |p| self.close_tabs_of(p));
+        let (msg, refetch) =
+            boardlist::archive_all(rows, track, |p| self.close_tabs_of(&Location::File(p.to_owned())));
+        self.refetch(refetch);
         if let Some(t) = &mut self.test_tracked {
             // What tracking would have recorded: the boards' new places.
+            let paths = rows.iter().filter_map(|r| match &r.source {
+                boardlist::Source::Local(p) => Some(p),
+                boardlist::Source::Remote { .. } => None,
+            });
             for p in paths {
                 let other = if manage::is_archived(p) {
                     manage::boards_dir(p).join(p.file_name().unwrap())
@@ -359,11 +393,11 @@ impl App {
     /// Carries out a confirmed delete / archive-stale.
     fn confirmed(&mut self, action: Action) {
         let notice = match action {
-            Action::Delete(paths) => {
+            Action::Delete(rows) => {
                 let trash = self.test_trash.clone().or_else(manage::home_trash);
-                manage::delete_all(&paths, trash.as_deref(), |p| self.close_tabs_of(p))
+                boardlist::delete_all(&rows, trash.as_deref(), |p| self.close_tabs_of(&Location::File(p.to_owned())))
             }
-            Action::ArchiveStale(paths) => self.toggle_archive(&paths),
+            Action::ArchiveStale(rows) => self.toggle_archive(&rows),
             _ => return,
         };
         self.reload_boards();
@@ -573,8 +607,7 @@ impl App {
                 MouseEventKind::ScrollDown => list.input(&Input::Key { key: Key::Down, pressed: true, mods: Mods::default() }, true),
                 MouseEventKind::ScrollUp => list.input(&Input::Key { key: Key::Up, pressed: true, mods: Mods::default() }, true),
                 MouseEventKind::Down(MouseButton::Left) if self.confirm_boards.is_none() && !self.confirm_quit => {
-                    let row = self.board_hits.iter().find(|(y, _)| *y == m.row).map(|(_, p)| p.clone());
-                    row.map(|p| Action::Open(Location::File(p)))
+                    self.board_hits.iter().find(|(y, _)| *y == m.row).map(|(_, loc)| Action::Open(loc.clone()))
                 }
                 _ => None,
             };

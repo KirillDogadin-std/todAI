@@ -53,6 +53,8 @@ main { max-width: 46rem; margin: 0 auto; padding: 0.5rem 0.75rem 4rem; }
 
 h2 { font-size: 0.8rem; letter-spacing: 0.06em; text-transform: uppercase; margin: 0; color: var(--strong); }
 .project { margin: 1.2rem 0 0.4rem; color: var(--muted); }
+.project-head { display: flex; align-items: baseline; justify-content: space-between; }
+.project-head button.small { margin-right: 0; }
 .boards { list-style: none; margin: 0; padding: 0; }
 .boards li {
   display: flex; justify-content: space-between; align-items: center;

@@ -31,6 +31,9 @@ pub fn show(ctx: &egui::Context, list: &mut BoardList, vim: bool) -> Option<Acti
             if let Some(n) = &list.notice {
                 ui.add(egui::Label::new(RichText::new(n).color(ui.visuals().hyperlink_color)).wrap());
             }
+            for n in list.remote_notes() {
+                ui.add(egui::Label::new(RichText::new(n).weak()).wrap());
+            }
             ui.add_space(4.0);
             toolbar(ui, list, vim, &mut action);
             ui.separator();
@@ -44,10 +47,8 @@ pub fn show(ctx: &egui::Context, list: &mut BoardList, vim: bool) -> Option<Acti
 
 fn toolbar(ui: &mut egui::Ui, list: &mut BoardList, vim: bool, action: &mut Option<Action>) {
     ui.horizontal_wrapped(|ui| {
-        if let Some((dir, name)) = &list.naming {
-            let project = dir.parent().and_then(|d| d.parent()).and_then(|d| d.file_name());
-            let project = project.map_or_else(String::new, |p| p.to_string_lossy().into_owned());
-            ui.label(format!("New board in {project}:"));
+        if let Some((next_to, name)) = &list.naming {
+            ui.label(format!("New board in {}:", next_to.place()));
             ui.label(RichText::new(format!("{name}▏")).monospace().strong());
             ui.weak("Enter create · Esc cancel");
             return;
@@ -76,7 +77,7 @@ fn toolbar(ui: &mut egui::Ui, list: &mut BoardList, vim: bool, action: &mut Opti
                 list.input(&todai_client::nav::Input::Text(".".into()), true);
             }
             if ui.small_button("New").on_hover_text("n: a board in the selected board's project").clicked() {
-                list.start_new(None);
+                list.start_new();
             }
             let targets = list.targets();
             if !list.marked.is_empty() {
@@ -102,13 +103,13 @@ fn rows(ui: &mut egui::Ui, list: &mut BoardList, action: &mut Option<Action>) {
         return;
     }
     let now = now_ms();
-    let mut project: Option<&str> = None;
+    let mut project: Option<String> = None;
     for (i, row) in visible.iter().enumerate() {
-        let s = &row.summary;
-        if list.sort == Sort::Project && project != Some(s.project.as_str()) {
-            project = Some(&s.project);
+        let s = row;
+        if list.sort == Sort::Project && project.as_deref() != Some(row.place().as_str()) {
+            project = Some(row.place());
             ui.add_space(if i == 0 { 0.0 } else { 6.0 });
-            ui.label(RichText::new(&s.project).strong());
+            ui.label(RichText::new(row.place()).strong());
         }
         let cursor = i == list.cursor;
         let frame = egui::Frame::new().inner_margin(egui::Margin::symmetric(6, 2)).corner_radius(4.0);
@@ -116,9 +117,9 @@ fn rows(ui: &mut egui::Ui, list: &mut BoardList, action: &mut Option<Action>) {
         let r = frame
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let mut marked = list.marked.contains(&s.path);
+                    let mut marked = list.marked.contains(&s.source);
                     if ui.checkbox(&mut marked, "").changed() {
-                        list.toggle_mark(&s.path);
+                        list.toggle_mark(&s.source);
                     }
                     let mut name = RichText::new(&s.name);
                     if row.open {
@@ -128,11 +129,11 @@ fn rows(ui: &mut egui::Ui, list: &mut BoardList, action: &mut Option<Action>) {
                         name = name.weak();
                     }
                     if list.sort == Sort::Activity {
-                        ui.weak(format!("{} /", s.project));
+                        ui.weak(format!("{} /", s.place()));
                     }
                     let n = ui.add(egui::Label::new(name).sense(egui::Sense::click()));
-                    if n.on_hover_text(s.path.display().to_string()).clicked() {
-                        *action = Some(Action::Open(todai_client::tab::Location::File(s.path.clone())));
+                    if n.on_hover_text(s.location().label()).clicked() {
+                        *action = Some(Action::Open(s.location()));
                     }
                     if s.waiting > 0 {
                         ui.label(RichText::new(format!("{} waiting", s.waiting)).color(ui.visuals().warn_fg_color));
@@ -146,12 +147,13 @@ fn rows(ui: &mut egui::Ui, list: &mut BoardList, action: &mut Option<Action>) {
                         }
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.small_button("Delete").clicked() {
-                            *action = Some(Action::Delete(vec![s.path.clone()]));
+                        // A server only archives: no delete for its boards.
+                        if s.host.is_none() && ui.small_button("Delete").clicked() {
+                            *action = Some(Action::Delete(vec![s.clone()]));
                         }
                         let label = if row.archived { "Unarchive" } else { "Archive" };
                         if ui.small_button(label).clicked() {
-                            *action = Some(Action::ToggleArchive(vec![s.path.clone()]));
+                            *action = Some(Action::ToggleArchive(vec![s.clone()]));
                         }
                         ui.weak(ago(now, s.last));
                     });

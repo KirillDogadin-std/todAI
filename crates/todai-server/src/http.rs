@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tiny_http::{Header, Method, Request, Response};
 use todai_core::api::{
-    API_VERSION, ApiError, BoardInfo, BoardSummaryView, BoardView, Events, Health, MAX_WAIT_SECS, Register,
+    API_VERSION, ApiError, BoardInfo, BoardSummaryView, BoardView, Events, Health, MAX_WAIT_SECS, NewBoard, Register,
 };
 use todai_core::store::{Actor, Event, Kind, Log};
 
@@ -153,6 +153,7 @@ fn handle(shared: &Shared, req: &mut Request) -> Reply {
         (Method::Post, ["boards"]) => register(shared, req),
         (Method::Post, ["boards", id, "archive"]) => board(id).map(|p| relocate(shared, id, &p, true)),
         (Method::Post, ["boards", id, "unarchive"]) => board(id).map(|p| relocate(shared, id, &p, false)),
+        (Method::Post, ["boards", id, "siblings"]) => board(id).and_then(|p| sibling(shared, &p, req)),
         (Method::Get, ["boards", id]) => board(id).map(|p| state(&p)),
         (Method::Delete, ["boards", id]) => Ok(match shared.registry.remove(id) {
             Ok(true) => Reply { status: 204, body: None, content_type: "" },
@@ -217,6 +218,17 @@ fn relocate(shared: &Shared, id: &str, path: &Path, archive: bool) -> Reply {
         return error(500, format!("moved to {}, but the registry failed: {e:#}", to.display()));
     }
     json(200, &BoardInfo::new(&to))
+}
+
+/// Creates an empty board next to `anchor` (in its live folder, also for an
+/// archived anchor) and serves it. A token holder only ever gets an empty
+/// file with a plain name, in a folder that already holds a served board.
+fn sibling(shared: &Shared, anchor: &Path, req: &mut Request) -> Result<Reply, Reply> {
+    let NewBoard { name } = read_json(req)?;
+    let dir = todai_core::boards::boards_dir(anchor);
+    let path = todai_core::boards::create(&dir, name.trim()).map_err(|e| error(422, format!("{e:#}")))?;
+    shared.registry.add(&path).map_err(|e| error(500, format!("{e:#}")))?;
+    Ok(json(201, &BoardInfo::new(&path)))
 }
 
 /// The folded board, for clients that don't fold events themselves.

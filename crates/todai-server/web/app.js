@@ -131,6 +131,20 @@ async function relocate(rows, what) {
   await showBoards();
 }
 
+// Asks for a name and creates an empty board in `project`, for an agent to
+// start with `todai attach NAME`.
+async function createBoard(anchor, project) {
+  const name = (prompt(`New board in ${project}: name (letters, digits, - and _)`) || "").trim();
+  if (!name) return;
+  try {
+    await api(`/boards/${anchor.board.id}/siblings`, { method: "POST", body: JSON.stringify({ name }) });
+    listState.notice = `Created ${name}. Have the agent in that project run: todai attach ${name}`;
+  } catch (e) {
+    listState.notice = `Couldn't create ${name}: ${e.message}`;
+  }
+  await showBoards();
+}
+
 function renderBoards() {
   const main = $("main");
   main.replaceChildren();
@@ -195,7 +209,15 @@ function renderBoards() {
   const byProject = new Map();
   for (const r of rows) byProject.set(r.board.project, [...(byProject.get(r.board.project) || []), r]);
   for (const [project, list] of [...byProject].sort((a, b) => a[0].localeCompare(b[0]))) {
-    main.append(el("h2", "project", project));
+    const head = el("div", "project-head");
+    head.append(el("h2", "project", project));
+    // New boards go next to one of the project's (prefer a live one): the
+    // server places them, the web app never sees paths.
+    const anchor = all.find((r) => r.board.project === project && !r.archived) || list[0];
+    const add = button("New board", () => createBoard(anchor, project));
+    add.className = "small";
+    head.append(add);
+    main.append(head);
     const ul = el("ul", "boards");
     for (const r of list.sort((x, y) => x.archived - y.archived || x.board.name.localeCompare(y.board.name))) {
       const li = el("li", r.archived ? "archived" : null);

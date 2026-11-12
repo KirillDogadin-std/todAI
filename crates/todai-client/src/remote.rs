@@ -66,6 +66,24 @@ impl Client {
         self.call(req.send_json(kind))
     }
 
+    /// Every served board with its board-list numbers (todai 0.7+ servers).
+    pub fn summaries(&self) -> Result<Vec<todai_core::api::BoardSummaryView>> {
+        self.call(self.agent.get(self.url("/summaries")).header("Authorization", self.auth()).call())
+    }
+
+    /// Archives (or unarchives) board `id`; the board under its new id.
+    pub fn relocate(&self, id: &str, archive: bool) -> Result<BoardInfo> {
+        let verb = if archive { "archive" } else { "unarchive" };
+        let req = self.agent.post(self.url(&format!("/boards/{id}/{verb}"))).header("Authorization", self.auth());
+        self.call(req.send_json(serde_json::json!({})))
+    }
+
+    /// Creates an empty board `name` in the project of board `id`.
+    pub fn sibling(&self, id: &str, name: &str) -> Result<BoardInfo> {
+        let req = self.agent.post(self.url(&format!("/boards/{id}/siblings"))).header("Authorization", self.auth());
+        self.call(req.send_json(todai_core::api::NewBoard { name: name.to_owned() }))
+    }
+
     /// Only accepted from the server's own machine.
     pub fn register(&self, path: &Path) -> Result<BoardInfo> {
         let req = self.agent.post(self.url("/boards")).header("Authorization", self.auth());
@@ -123,6 +141,13 @@ pub fn save_token(server: &str, token: &str) -> Result<()> {
     drop(f);
     std::fs::rename(tmp, path)?;
     Ok(())
+}
+
+/// Servers with a saved token, except this machine's own server (its
+/// boards are local files, listed as such).
+pub fn saved_servers() -> Vec<String> {
+    let local = local().map(|c| c.base);
+    saved_tokens().into_keys().filter(|s| Some(s) != local.as_ref()).collect()
 }
 
 /// The client for `server`: its saved token, or the local server's own.

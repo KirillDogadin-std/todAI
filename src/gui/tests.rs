@@ -649,7 +649,7 @@ fn hack_backs_up_body_text_after_the_system_font() {
 /// (as `App::ui` feeds it) and what it draws.
 mod boards {
     use super::*;
-    use todai_client::boardlist::{Action, BoardList};
+    use todai_client::boardlist::{Action, BoardList, Source};
     use todai_client::tab::Location;
 
     struct ListHarness {
@@ -733,12 +733,14 @@ mod boards {
         h.text(" ");
         h.text("j");
         h.text(" ");
-        assert_eq!(h.text("d"), Some(Action::Delete(vec![h.paths[1].clone(), h.paths[0].clone()])));
-        assert_eq!(h.text("a"), Some(Action::ToggleArchive(vec![h.paths[1].clone(), h.paths[0].clone()])));
+        let sources = |rows: &Vec<todai_client::boardlist::Row>| rows.iter().map(|r| r.source.clone()).collect::<Vec<_>>();
+        let want = vec![Source::Local(h.paths[1].clone()), Source::Local(h.paths[0].clone())];
+        assert!(matches!(h.text("d"), Some(Action::Delete(r)) if sources(&r) == want));
+        assert!(matches!(h.text("a"), Some(Action::ToggleArchive(r)) if sources(&r) == want));
         h.text("n");
         h.text("notes");
-        let dir = h.paths[0].parent().unwrap().to_owned();
-        assert_eq!(h.key(Key::Enter), Some(Action::Create { dir, name: "notes".into() }));
+        let Some(Action::Create { next_to, name }) = h.key(Key::Enter) else { panic!("no create") };
+        assert_eq!((next_to.source, name.as_str()), (Source::Local(h.paths[0].clone()), "notes"), "the cursor's board: alpha/main");
     }
 
     #[test]

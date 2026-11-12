@@ -95,7 +95,10 @@ Answer fields, todo notes and the elaboration message:
 ## Board list
 
 Every tracked board, grouped by project: the boards todai opened or an
-agent attached (boards never opened through todai aren't listed). Each row
+agent attached (boards never opened through todai aren't listed), plus
+the boards of every server you saved a token for (`todai open --server URL
+--token T`), shown as `project @ host` and fetched in the background; a
+server that can't be reached gets a one-line note. Each row
 shows what waits for you, elaborations you asked for, last activity, and
 `open` / `stale` / `archived` badges. A board is **stale** when nothing
 waits on it and no agent wrote for 7 days. It owns the keyboard while open.
@@ -107,8 +110,8 @@ waits on it and no agent wrote for 7 days. It owns the keyboard while open.
 | `space` · checkbox | mark (actions apply to marked boards, else the one under the cursor) |
 | `/` | filter by name or project; in mouse mode just type. `Enter` keeps it, `Esc` clears it |
 | `a` | archive (moves the file to `.agents/todai/archive/`); on an archived board, unarchive |
-| `d` | delete: moves the file to the trash, after asking |
-| `n` | new empty board in the selected board's project; type a name, `Enter`. The agent then runs `todai attach NAME` |
+| `d` | delete: moves the file to the trash, after asking (local boards only: servers only archive) |
+| `n` | new empty board in the selected board's project (on its server, for a server's board); type a name, `Enter`. The agent then runs `todai attach NAME` |
 | `S` | archive every stale board, after asking |
 | `.` | show / hide archived boards |
 | `s` | sort by project / by last activity |

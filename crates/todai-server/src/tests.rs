@@ -330,3 +330,26 @@ fn there_is_no_delete_through_the_api() {
     assert_eq!(r.unwrap().status().as_u16(), 204);
     assert!(f.log.path().exists());
 }
+
+#[test]
+fn siblings_creates_an_empty_board_next_to_another() {
+    let f = Fixture::new();
+    let live = f.dir.path().join("proj/.agents/todai/main.jsonl");
+    std::fs::create_dir_all(live.parent().unwrap()).unwrap();
+    std::fs::write(&live, "").unwrap();
+    f.post("/api/v2/boards", json!({"path": live}));
+    let url = format!("/api/v2/boards/{}/siblings", board_id(&live));
+
+    let (status, made) = f.post(&url, json!({"name": "review"}));
+    assert_eq!(status, 201, "{made}");
+    let made: BoardInfo = serde_json::from_value(made).unwrap();
+    let path = f.dir.path().join("proj/.agents/todai/review.jsonl");
+    assert_eq!((made.id, made.project.as_str()), (board_id(&path), "proj"));
+    assert_eq!(std::fs::read(&path).unwrap(), b"", "empty, for an agent to attach");
+    assert_eq!(f.get(&format!("/api/v2/boards/{}", board_id(&path))).0, 200, "served at once");
+
+    assert_eq!(f.post(&url, json!({"name": "review"})).0, 422, "never over an existing board");
+    for bad in ["../x", "a b", "", "archive"] {
+        assert_eq!(f.post(&url, json!({"name": bad})).0, 422, "{bad:?}");
+    }
+}

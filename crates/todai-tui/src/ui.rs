@@ -8,8 +8,6 @@ use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use std::path::PathBuf;
-
 use todai_client::boardlist;
 use todai_client::nav::{self, Focus, FocusRequest, Mode};
 use todai_client::store::Kind;
@@ -272,12 +270,13 @@ fn board_list(f: &mut Frame, app: &mut App, area: Rect) {
     if let Some(n) = &list.notice {
         head.extend(text::wrap_lines(&text::plain_cells(n, Style::new().fg(ACCENT)), inner_w, vec![], vec![]));
     }
+    for n in list.remote_notes() {
+        head.push(Line::styled(n, dim()));
+    }
     head.push(match &list.naming {
-        Some((dir, name)) => {
-            let project = dir.parent().and_then(|d| d.parent()).and_then(|d| d.file_name());
-            let project = project.map_or_else(String::new, |p| p.to_string_lossy().into_owned());
+        Some((next_to, name)) => {
             Line::from(vec![
-                Span::raw(format!("New board in {project}: ")),
+                Span::raw(format!("New board in {}: ", next_to.place())),
                 Span::styled(format!("{name}▏"), bold),
                 Span::styled("  Enter create · Esc cancel", dim()),
             ])
@@ -296,7 +295,7 @@ fn board_list(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Rows, with which line is the cursor's, so it can be scrolled into view.
     let now = boardlist::now_ms();
-    let mut rows: Vec<(Line, Option<PathBuf>)> = Vec::new();
+    let mut rows: Vec<(Line, Option<todai_client::tab::Location>)> = Vec::new();
     let mut cursor_line = 0;
     let mut project: Option<String> = None;
     let visible: Vec<boardlist::Row> = list.visible().into_iter().cloned().collect();
@@ -309,18 +308,18 @@ fn board_list(f: &mut Frame, app: &mut App, area: Rect) {
         rows.push((Line::styled(msg, dim()), None));
     }
     for (i, row) in visible.iter().enumerate() {
-        let s = &row.summary;
-        if list.sort == boardlist::Sort::Project && project.as_deref() != Some(s.project.as_str()) {
+        let s = row;
+        if list.sort == boardlist::Sort::Project && project.as_deref() != Some(s.place().as_str()) {
             if project.is_some() {
                 rows.push((Line::default(), None));
             }
-            project = Some(s.project.clone());
-            rows.push((Line::styled(s.project.clone(), bold), None));
+            project = Some(s.place());
+            rows.push((Line::styled(s.place(), bold), None));
         }
-        let mark = if list.marked.contains(&s.path) { "[x]" } else { "[ ]" };
+        let mark = if list.marked.contains(&s.source) { "[x]" } else { "[ ]" };
         let mut left = vec![Span::raw(format!(" {mark} "))];
         if list.sort == boardlist::Sort::Activity {
-            left.push(Span::styled(format!("{} / ", s.project), dim()));
+            left.push(Span::styled(format!("{} / ", s.place()), dim()));
         }
         let name_style = if row.archived { dim() } else if row.open { bold } else { Style::new() };
         left.push(Span::styled(s.name.clone(), name_style));
@@ -345,7 +344,7 @@ fn board_list(f: &mut Frame, app: &mut App, area: Rect) {
             line = line.style(Style::new().add_modifier(Modifier::REVERSED));
             cursor_line = rows.len();
         }
-        rows.push((line, Some(s.path.clone())));
+        rows.push((line, Some(s.location())));
     }
 
     let inner_h = r.height.saturating_sub(2) as usize;
@@ -353,9 +352,9 @@ fn board_list(f: &mut Frame, app: &mut App, area: Rect) {
     let skip = (cursor_line + 1).saturating_sub(room);
     let top = r.y + 1 + head.len() as u16;
     let mut lines = head;
-    for (n, (line, path)) in rows.into_iter().skip(skip).take(room).enumerate() {
-        if let Some(p) = path {
-            app.board_hits.push((top + n as u16, p));
+    for (n, (line, loc)) in rows.into_iter().skip(skip).take(room).enumerate() {
+        if let Some(l) = loc {
+            app.board_hits.push((top + n as u16, l));
         }
         lines.push(line);
     }

@@ -96,6 +96,13 @@ impl BoardSummaryView {
     }
 }
 
+/// `POST /api/v2/boards/{id}/siblings`: create an empty board `name` in the
+/// same project as board `id` (an agent then runs `todai attach NAME`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct NewBoard {
+    pub name: String,
+}
+
 /// `GET /api/v2/boards/{id}/events?after=SEQ&wait=SECS`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Events {
