@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
-use todai_memory::{Actor, CardDraft, Class, Memory, Source, format};
+use todai_memory::{Actor, CardDraft, Class, Memory, Source, embed, format};
 
 use crate::agent;
 
@@ -35,6 +35,10 @@ pub enum Cmd {
         /// Record it as the operator's (an axiom is then active at once).
         #[arg(long)]
         operator: bool,
+        /// Keep this key even though it is close to an existing one (repeat,
+        /// or comma separate). `add` names the close keys when it refuses.
+        #[arg(long = "new-key", value_delimiter = ',')]
+        new_keys: Vec<String>,
     },
     /// Print a card in full. A unique prefix of the id works.
     Show {
@@ -42,10 +46,11 @@ pub enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// [agent] Cards tagged with any of these exact keys, best first.
+    /// [agent] Cards whose keys are near any of these short phrases (2-6
+    /// words each), best first. Try 2-3 phrasings of the same question.
     Find {
         #[arg(required = true)]
-        keys: Vec<String>,
+        phrases: Vec<String>,
         #[arg(long)]
         json: bool,
     },
@@ -61,14 +66,17 @@ pub fn run(cmd: Cmd) -> Result<()> {
     let path = todai_memory::path_for(&root).context("no state directory: set HOME or XDG_STATE_HOME")?;
     let mut memory = Memory::open(&path)?;
     match cmd {
-        Cmd::Add { gist, class, keys, from, operator } => {
+        Cmd::Add { gist, class, keys, from, operator, new_keys } => {
             let mut draft = sections(&read_stdin()?)?;
             draft.class = Some(Class::parse(&class)?);
             draft.gist = gist;
             draft.keys = keys;
             let source = from.map(|f| source(&root, &f)).transpose()?;
             let actor = if operator { Actor::Operator } else { Actor::Agent };
-            let card = memory.create(draft, actor, source)?;
+            let (card, snaps) = memory.remember(draft, actor, source, embed::default(), &new_keys)?;
+            for s in &snaps {
+                eprintln!("key {:?} is the existing {:?} ({:.2}): used that", s.from, s.to, s.similarity);
+            }
             println!("{}", card.id);
             if card.status == todai_memory::Status::Proposed {
                 eprintln!("{}: proposed; an axiom holds once the operator confirms it", card.id);
@@ -82,15 +90,21 @@ pub fn run(cmd: Cmd) -> Result<()> {
                 println!("{}", format::full(&card));
             }
         }
-        Cmd::Find { keys, json } => {
-            let cards = memory.find(&keys)?;
+        Cmd::Find { phrases, json } => {
+            let hits = memory.recall(&phrases, embed::default())?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&cards)?);
-            } else if cards.is_empty() {
+                println!("{}", serde_json::to_string_pretty(&hits)?);
+            } else if hits.is_empty() {
                 // Not an error: "nothing decided about this yet" is an answer.
-                println!("no card has these keys; `todai memory keys` lists the ones in use");
+                println!("no key near these phrases: nothing remembered about this; `todai memory keys` lists the keys");
             } else {
-                let blocks: Vec<String> = cards.iter().map(format::hit_block).collect();
+                let blocks: Vec<String> = hits
+                    .iter()
+                    .map(|h| {
+                        let via: Vec<String> = h.via.iter().map(|(p, k, s)| format!("{p:?} → {k} ({s:.2})")).collect();
+                        format!("{}\n  via: {}", format::hit_block(&h.card), via.join("; "))
+                    })
+                    .collect();
                 println!("{}", blocks.join("\n\n"));
             }
         }

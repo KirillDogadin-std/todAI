@@ -11,6 +11,9 @@ anyhow.workspace = true
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
+# The embedder's tokenizer: punctuation classes and accent stripping, as BERT does them.
+unicode-general-category = "1.1.0"
+unicode-normalization = "0.1.26"
 
 [dev-dependencies]
 tempfile.workspace = true

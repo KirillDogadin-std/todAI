@@ -40,6 +40,15 @@ pub(crate) const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (key, card)
     ) WITHOUT ROWID;
     CREATE INDEX tagged_card ON tagged (card);",
+    // 3: key vectors, a cache per embedder (`model` = `Embedder::id`).
+    // Recomputable from the key text at any time; `vec` is NULL when the
+    // model knows none of the key's tokens.
+    "CREATE TABLE key_vector (
+        key   INTEGER NOT NULL REFERENCES key (id),
+        model TEXT NOT NULL,
+        vec   BLOB,
+        PRIMARY KEY (key, model)
+    ) WITHOUT ROWID;",
 ];
 
 /// The schema version this build writes.

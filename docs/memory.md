@@ -1,8 +1,8 @@
 # Decision memory
 
-*Early: cards and exact-key lookup work; fuzzy search, links between cards,
-axiom confirmation and the agent protocol are still to come. Agents don't
-use it on their own yet: `todai guide` doesn't mention it.*
+*Early: cards, keys and finding them by similar wording work; links between
+cards, axiom confirmation and the agent protocol are still to come. Agents
+don't use it on their own yet: `todai guide` doesn't mention it.*
 
 Long projects pile up decisions, and the reasoning behind them sits in
 resolved board items that nobody reads again. Agents re-ask settled
@@ -36,8 +36,15 @@ nothing else in todai.
 | from | the board item it was decided in |
 
 Keys are lowercased with single spaces and no punctuation at the ends
-(`GPU  Backend.` → `gpu backend`), and not stemmed. Reuse existing keys
-(`todai memory keys`) so the vocabulary stays small.
+(`GPU  Backend.` → `gpu backend`), and not stemmed. The vocabulary is
+kept small on purpose, so the same idea is always filed under the same key:
+
+- a new key that is an existing one in other words (`memory usages`,
+  `Memory Usage`) is **replaced** by it, and `add` says so;
+- a new key that may be a **synonym** (`ram usage` next to `memory usage`)
+  is **refused**, naming the close keys: reuse one, or keep yours with
+  `--new-key "ram usage"`;
+- anything else is a new key.
 
 An axiom recorded by an agent is **proposed** until the operator confirms
 it; the operator's own (`--operator`) are active at once.
@@ -58,7 +65,7 @@ A one-shot tool that exits quickly.
 MD
 # prints the new id: m167f8289
 
-todai memory find "memory usage" "gui toolkit"   # cards with any of these keys, best first
+todai memory find "RAM usage" "graphics backend" # cards whose keys are near any phrase, best first
 todai memory show m167f                          # one card in full
 todai memory keys                                # the vocabulary, with card counts
 ```
@@ -67,7 +74,43 @@ todai memory keys                                # the vocabulary, with card cou
 ids restart on every board); write `BOARD/d3` to name it. Sections on stdin
 are `## Context`, `## Why`, `## Applies`, `## Not when`, `## Rejected`.
 
-`find` ranks cards by how many of the keys they have, then axioms before
-context before one-offs, then newest. It prints a short block per card
-(about 100 tokens: gist, the start of each field, keys, origin); `show`
-prints everything. `--json` on `show`, `find` and `keys` is for scripts.
+`find` takes short phrases (2-6 words) in any wording. Each lands on the
+nearest existing keys, and those keys select cards exactly. Cards are ranked
+by how many phrases reached them, then how close the key was, then axioms
+before context before one-offs, then newest. Each card prints as a short block
+(about 100 tokens: gist, the start of each field, keys, origin) plus `via:`,
+the phrase → key that found it. "No key near these phrases" is an answer
+too: nothing has been decided about this yet. `show` prints everything.
+`--json` on `show`, `find` and `keys` is for scripts.
+
+## How similar wording is found
+
+A built-in model, [potion-base-8M](https://huggingface.co/minishlab/potion-base-8M)
+(MIT), turns a phrase into a vector: the average of its word pieces'
+vectors. It runs locally in about 10 ms, needs no network or GPU, and adds
+8 MB to the binary. It matches **shared words** well and true synonyms
+less so:
+
+| pair | similarity |
+|---|---|
+| `gpu backend` / `gpu backends` | 0.997 |
+| `memory usage` / `memory use` | 0.887 |
+| `memory usage` / `ram usage` | 0.74 |
+| `memory usage` / `cpu usage` | 0.69 |
+| `gui toolkit` / `ui framework` | 0.42 |
+| `memory usage` / `release workflow` | 0.07 |
+
+Thresholds: replace a key at **0.88** or above, ask between **0.65** and
+0.88, and find keys at **0.5** or above. Synonyms that share no word
+(`ui framework`) can be missed, which is why it pays to try two or three
+phrasings, and `todai memory keys` shows the vocabulary.
+
+## Changing the embedder
+
+The model is meant to be swappable. Everything goes through the `Embedder`
+trait (`crates/todai-memory/src/embed/mod.rs`), and **vectors are only a
+cache**: keys are stored as text, vectors per embedder id next to them.
+A different embedder computes its own vectors the first time it is used,
+with no migration and nothing lost, and switching back is free. To swap,
+implement `Embedder`, return it from `embed::default()`, and retune its
+three thresholds on real keys. Similarity scales differ between models.

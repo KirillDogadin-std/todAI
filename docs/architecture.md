@@ -24,7 +24,7 @@ remote frontends use instead of the file.
 | Crate | Depends on | |
 |---|---|---|
 | `crates/todai-core` | serde | the event log, inbox text, API wire types, XDG paths; no GUI, no network |
-| `crates/todai-memory` | rusqlite (bundled), serde | decision memory: an append-only SQLite event store, one database per project in `$XDG_STATE_HOME/todai/memory/`; depends on nothing else in todai |
+| `crates/todai-memory` | rusqlite (bundled), serde, unicode tables | decision memory: an append-only SQLite event store, one database per project in `$XDG_STATE_HOME/todai/memory/`; depends on nothing else in todai |
 | `crates/todai-server` | core, tiny_http | the HTTP server, as a library and the `todai-server` binary; no GUI |
 | `crates/todai-client` | core, notify, ureq | what every frontend shares: open boards, keyboard navigation, card text, the server client, the window socket, config and session; no GUI |
 | `crates/todai-tui` | core, client, ratatui | `todai-tui`: the board in a terminal; no GUI |
@@ -42,7 +42,7 @@ of the server, client and TUI (CI checks too).
 | `crates/todai-core/src/store/` | the event log: types (`event.rs`), folding into a board (`state.rs`), locked append and read (`mod.rs`) |
 | `crates/todai-core/src/inbox.rs` | turns unprocessed operator events into the text agents receive |
 | `crates/todai-core/src/api.rs` | the HTTP API's wire types and board ids |
-| `crates/todai-memory/src/` | `lib.rs` (`Memory::open` with WAL and busy timeout, `append`, `events`; `path_for` a project), `schema.rs` (migrations by `user_version`; triggers that refuse UPDATE/DELETE of events), `card.rs` (card types, validation, key normalisation; derived `card`/`key`/`tagged` tables, the card itself read from its `created` event), `format.rs` (gist line, hit block, full card) |
+| `crates/todai-memory/src/` | `lib.rs` (`Memory::open` with WAL and busy timeout, `append`, `events`; `path_for` a project), `schema.rs` (migrations by `user_version`; triggers that refuse UPDATE/DELETE of events), `card.rs` (card types, validation, key normalisation; derived `card`/`key`/`tagged` tables, the card itself read from its `created` event), `format.rs` (gist line, hit block, full card), `recall.rs` (phrase → nearest keys → cards; snapping new keys; the `key_vector` cache per embedder), `embed/` (the `Embedder` trait, the one place to change the model; `potion.rs`: built-in potion-base-8M, int8, from `model/`; `wordpiece.rs`: BERT's tokenizer, pinned to HuggingFace's by `reference.json`) |
 | `crates/todai-server/src/` | `lib.rs` (args, bind, run), `http.rs` (routes, auth, long-poll), `changes.rs` (one shared file watcher that wakes long-polls), `registry.rs` (token, registered boards, address file) |
 | `src/memory.rs` | `todai memory ...`: finds the project's database, parses card sections from stdin, infers `--from` boards |
 | `src/cli.rs` | every subcommand; also starting the window (`open`, `spawn_window`, `gui_main`) and opening remote boards (`open_remote`) |

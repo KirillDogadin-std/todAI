@@ -277,3 +277,102 @@ fn formats_fit_the_token_budget() {
     let full = format::full(&c);
     assert!(full.contains("## Why") && full.contains(&c.why.trim().to_owned()), "{full}");
 }
+
+// ---- recall and snapping (step 03) ----
+
+fn e() -> &'static dyn embed::Embedder {
+    embed::default()
+}
+
+#[test]
+fn recall_finds_cards_through_nearby_keys() {
+    let (_d, mut m) = mem();
+    let mem_card = m.create(draft(Class::Context, "egui: idle memory", &["memory usage"]), Actor::Agent, None).unwrap();
+    let gpu = m.create(draft(Class::Context, "glow, not wgpu", &["gpu backend"]), Actor::Agent, None).unwrap();
+    m.create(draft(Class::OneOff, "unrelated", &["release workflow"]), Actor::Agent, None).unwrap();
+
+    let hits = m.recall(&["RAM usage".into()], e()).unwrap();
+    assert_eq!(hits.iter().map(|h| &h.card.id).collect::<Vec<_>>(), vec![&mem_card.id]);
+    let (phrase, key, s) = &hits[0].via[0];
+    assert_eq!((phrase.as_str(), key.as_str()), ("RAM usage", "memory usage"));
+    assert!(*s > 0.65 && *s < 0.9, "{s}");
+
+    // Union, ranked by how many phrases reached a card.
+    let both = m.create(draft(Class::OneOff, "both", &["memory usage", "gpu backend"]), Actor::Agent, None).unwrap();
+    let hits = m.recall(&["memory use".into(), "graphics backend".into()], e()).unwrap();
+    let ids: Vec<&str> = hits.iter().map(|h| h.card.id.as_str()).collect();
+    assert_eq!(ids[0], both.id, "{hits:#?}");
+    assert!(ids.contains(&gpu.id.as_str()) && ids.contains(&mem_card.id.as_str()));
+    assert_eq!(hits[0].via.len(), 2);
+
+    assert_eq!(m.recall(&["font rendering".into()], e()).unwrap(), vec![], "nothing near: new territory");
+}
+
+#[test]
+fn new_keys_snap_ask_or_stay() {
+    let (_d, mut m) = mem();
+    m.create(draft(Class::Context, "first", &["memory usage", "http server"]), Actor::Agent, None).unwrap();
+
+    // A plural snaps onto the existing key.
+    let (c, snaps) = m.remember(draft(Class::Context, "g", &["Memory Usages"]), Actor::Agent, None, e(), &[]).unwrap();
+    assert_eq!(c.keys, vec!["memory usage"]);
+    assert_eq!((snaps[0].from.as_str(), snaps[0].to.as_str()), ("memory usages", "memory usage"));
+
+    // A possible synonym is refused, naming the near key...
+    let err = m.remember(draft(Class::Context, "g", &["ram usage", "web server"]), Actor::Agent, None, e(), &[]);
+    let err = format!("{:#}", err.unwrap_err());
+    assert!(err.contains("\"ram usage\" is close to \"memory usage\"") && err.contains("\"web server\""), "{err}");
+    assert_eq!(m.keys().unwrap().len(), 2, "nothing written");
+    // ...unless confirmed as new.
+    let new = ["RAM usage".to_owned(), "web server".to_owned()];
+    let (c, _) = m.remember(draft(Class::Context, "g", &["ram usage", "web server"]), Actor::Agent, None, e(), &new).unwrap();
+    assert_eq!(c.keys, vec!["ram usage", "web server"]);
+
+    // Unrelated keys are just new.
+    let (c, snaps) = m.remember(draft(Class::Context, "g", &["font rendering"]), Actor::Agent, None, e(), &[]).unwrap();
+    assert_eq!((c.keys, snaps), (vec!["font rendering".to_owned()], vec![]));
+}
+
+/// A deliberately different embedder: vectors from a word hash.
+struct Toy;
+
+impl embed::Embedder for Toy {
+    fn id(&self) -> &str {
+        "toy/1"
+    }
+    fn embed(&self, phrase: &str) -> Option<Vec<f32>> {
+        let mut v = vec![0f32; 16];
+        for w in phrase.split_whitespace() {
+            v[(fnv1a(w.as_bytes()) % 16) as usize] += 1.0;
+        }
+        let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        (n > 0.0).then(|| v.iter().map(|x| x / n).collect())
+    }
+    fn snap(&self) -> f32 {
+        0.99
+    }
+    fn ask(&self) -> f32 {
+        0.6
+    }
+    fn recall(&self) -> f32 {
+        0.5
+    }
+}
+
+#[test]
+fn swapping_the_embedder_needs_no_migration() {
+    let (_d, mut m) = mem();
+    let card = m.create(draft(Class::Context, "g", &["memory usage"]), Actor::Agent, None).unwrap();
+    assert_eq!(m.recall(&["ram usage".into()], e()).unwrap()[0].card.id, card.id);
+    // Another embedder computes its own vectors on first use, next to the
+    // old ones; recall works with it at once, and switching back is free.
+    let toy = m.recall(&["memory".into()], &Toy).unwrap();
+    assert_eq!(toy[0].card.id, card.id, "shares the word: toy similarity 0.71");
+    assert_eq!(m.recall(&["ram usage".into()], e()).unwrap()[0].card.id, card.id);
+    let models: Vec<String> = {
+        let c = Connection::open(m.path()).unwrap();
+        let mut s = c.prepare("SELECT DISTINCT model FROM key_vector ORDER BY model").unwrap();
+        s.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect()
+    };
+    assert_eq!(models, vec!["potion-base-8M/int8/1", "toy/1"]);
+}

@@ -18,12 +18,15 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
 mod card;
+pub mod embed;
 pub mod format;
+mod recall;
 mod schema;
 #[cfg(test)]
 mod tests;
 
 pub use card::{Card, CardDraft, Class, MAX_GIST, MAX_KEYS, Status, normalize_key};
+pub use recall::{Hit, Snap};
 
 /// How long a writer waits for another connection's transaction to finish
 /// before giving up with `SQLITE_BUSY`.
@@ -152,6 +155,29 @@ impl Memory {
         card::index(&tx, &id, &created, event.seq)?;
         tx.commit()?;
         Ok(card::from_created(id, created, &event))
+    }
+
+    /// Like [`create`](Self::create), but first fits the keys to the
+    /// vocabulary with `e`: a key that is an existing one in other words
+    /// becomes that key (returned as [`Snap`]s); one that may be a synonym
+    /// is refused unless listed in `new_keys`.
+    pub fn remember(
+        &mut self,
+        draft: CardDraft,
+        actor: Actor,
+        source: Option<Source>,
+        e: &dyn embed::Embedder,
+        new_keys: &[String],
+    ) -> Result<(Card, Vec<Snap>)> {
+        let draft = draft.validate()?;
+        let (draft, snaps) = recall::snap(&mut self.conn, draft, e, new_keys)?;
+        Ok((self.create(draft, actor, source)?, snaps))
+    }
+
+    /// Cards whose keys are near any of `phrases` (by `e`), best first:
+    /// most phrases matched, then closest key, then axioms, then newest.
+    pub fn recall(&mut self, phrases: &[String], e: &dyn embed::Embedder) -> Result<Vec<Hit>> {
+        recall::recall(&mut self.conn, phrases, e)
     }
 
     /// The card with this id, or the only one starting with it.
