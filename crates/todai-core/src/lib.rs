@@ -3,6 +3,7 @@
 //! (`dirs`). No GUI and no network code lives here.
 
 pub mod api;
+pub mod boards;
 pub mod dirs;
 pub mod inbox;
 pub mod store;

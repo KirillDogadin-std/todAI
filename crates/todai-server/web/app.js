@@ -89,39 +89,142 @@ function showLogin(reason) {
 
 // ---- board list ---------------------------------------------------------------
 
+// What the list shows, kept across re-renders (filtering doesn't refetch).
+const listState = { rows: [], filter: "", showArchived: false, selected: new Set(), notice: "" };
+
 async function showBoards() {
   stopFollowing();
   $("where").textContent = "";
-  const boards = await api("/boards");
-  const views = await Promise.all(boards.map((b) => api(`/boards/${b.id}`).catch(() => null)));
+  listState.rows = await api("/summaries");
+  const ids = new Set(listState.rows.map((r) => r.board.id));
+  for (const id of listState.selected) if (!ids.has(id)) listState.selected.delete(id);
+  renderBoards();
+  status("");
+}
+
+// "now", "5 min ago", "3 h ago", "2 d ago": as the window and the TUI say it.
+function ago(ts) {
+  if (!ts) return "never";
+  const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return `${Math.floor(s / 86400)} d ago`;
+}
+
+// Archive (or unarchive) boards, then show the list again. Reversible, so
+// no confirmation for one; the server gives each moved board a new id.
+async function relocate(rows, what) {
+  const done = [];
+  const failed = [];
+  for (const r of rows) {
+    const verb = r.archived ? "unarchive" : "archive";
+    try {
+      await api(`/boards/${r.board.id}/${verb}`, { method: "POST", body: "{}" });
+      done.push(r.board.name);
+    } catch (e) {
+      failed.push(`${r.board.name}: ${e.message}`);
+    }
+  }
+  listState.selected.clear();
+  listState.notice = [done.length ? `${what} ${done.join(", ")}.` : "", ...failed].filter(Boolean).join(" ");
+  await showBoards();
+}
+
+function renderBoards() {
   const main = $("main");
   main.replaceChildren();
-  if (!boards.length) {
-    main.append(el("p", "empty", "No boards yet. Boards show up here once an agent runs `todai attach` while the server runs."));
+  main.append(el("p", "hint", "Boards this server serves: the ones agents attached or you opened while it ran."));
+  if (listState.notice) main.append(el("p", "notice", listState.notice));
+
+  const all = listState.rows;
+  const tools = el("div", "list-tools");
+  const filter = el("input");
+  filter.type = "search";
+  filter.placeholder = "filter";
+  filter.value = listState.filter;
+  filter.addEventListener("input", () => {
+    listState.filter = filter.value;
+    renderBoards();
+    const f = document.querySelector(".list-tools input[type=search]");
+    f.focus();
+    f.setSelectionRange(f.value.length, f.value.length);
+  });
+  const archived = el("label", "toggle");
+  const box = el("input");
+  box.type = "checkbox";
+  box.checked = listState.showArchived;
+  box.addEventListener("change", () => {
+    listState.showArchived = box.checked;
+    renderBoards();
+  });
+  archived.append(box, document.createTextNode(" show archived"));
+  tools.append(filter, archived);
+  const stale = all.filter((r) => r.stale);
+  if (stale.length) {
+    tools.append(
+      button(`Archive stale (${stale.length})`, () => {
+        if (confirm(`Archive ${stale.length} stale boards? Nothing waits on them and no agent wrote for a week.`)) {
+          relocate(stale, "Archived");
+        }
+      }),
+    );
+  }
+  const selected = all.filter((r) => listState.selected.has(r.board.id));
+  if (selected.length) {
+    tools.append(button(`Archive selected (${selected.length})`, () => relocate(selected, "Moved")));
+  }
+  main.append(tools);
+
+  const needle = listState.filter.toLowerCase();
+  const rows = all.filter(
+    (r) =>
+      (listState.showArchived || !r.archived) &&
+      (!needle || r.board.name.toLowerCase().includes(needle) || r.board.project.toLowerCase().includes(needle)),
+  );
+  if (!rows.length) {
+    main.append(
+      el(
+        "p",
+        "empty",
+        all.length ? "No board matches." : "No boards yet. Boards show up here once an agent runs `todai attach` while the server runs.",
+      ),
+    );
+    return;
   }
   const byProject = new Map();
-  boards.forEach((b, i) => {
-    const list = byProject.get(b.project) || [];
-    list.push([b, views[i]]);
-    byProject.set(b.project, list);
-  });
+  for (const r of rows) byProject.set(r.board.project, [...(byProject.get(r.board.project) || []), r]);
   for (const [project, list] of [...byProject].sort((a, b) => a[0].localeCompare(b[0]))) {
     main.append(el("h2", "project", project));
     const ul = el("ul", "boards");
-    for (const [b, v] of list.sort((x, y) => x[0].name.localeCompare(y[0].name))) {
-      const li = el("li");
-      const a = el("a", null, b.name);
-      a.href = `#/b/${b.id}`;
-      li.append(a);
-      if (v) {
-        const n = waiting(v);
-        li.append(el("span", n ? "count" : "count zero", n ? `${n} waiting` : "nothing waiting"));
-      }
+    for (const r of list.sort((x, y) => x.archived - y.archived || x.board.name.localeCompare(y.board.name))) {
+      const li = el("li", r.archived ? "archived" : null);
+      const pick = el("input");
+      pick.type = "checkbox";
+      pick.checked = listState.selected.has(r.board.id);
+      pick.setAttribute("aria-label", `select ${r.board.name}`);
+      pick.addEventListener("change", () => {
+        if (pick.checked) listState.selected.add(r.board.id);
+        else listState.selected.delete(r.board.id);
+        renderBoards();
+      });
+      const a = el("a", null, r.board.name);
+      a.href = `#/b/${r.board.id}`;
+      const meta = el("span", "meta");
+      meta.append(el("span", r.waiting ? "count" : "count zero", r.waiting ? `${r.waiting} waiting` : "nothing waiting"));
+      if (r.asked) meta.append(el("span", "badge", `${r.asked} asked`));
+      if (r.stale) meta.append(el("span", "badge", "stale"));
+      if (r.archived) meta.append(el("span", "badge", "archived"));
+      meta.append(el("span", "ago", ago(r.last)));
+      const move = button(r.archived ? "Unarchive" : "Archive", () =>
+        relocate([r], r.archived ? "Unarchived" : "Archived"),
+      );
+      move.className = "small";
+      li.append(pick, a, meta, move);
       ul.append(li);
     }
     main.append(ul);
   }
-  status("");
 }
 
 // Items that wait for the operator: pending decisions and open todos.

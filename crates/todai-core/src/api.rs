@@ -62,6 +62,40 @@ pub struct Register {
     pub path: PathBuf,
 }
 
+/// `GET /api/v2/summaries`: a served board with what the board list shows
+/// about it. Added in todai 0.7 without a version bump: a new route, no
+/// existing shape changed.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct BoardSummaryView {
+    pub board: BoardInfo,
+    /// Decisions and todos waiting for the operator.
+    pub waiting: usize,
+    /// Elaborations the operator asked for, not answered yet.
+    pub asked: usize,
+    /// Unix ms of the newest event (or the file's age, if it has none), and
+    /// of the newest agent event (0 if none).
+    pub last: u64,
+    pub last_agent: u64,
+    pub archived: bool,
+    /// Nothing waits, and no one wrote for a week: a hint to archive.
+    pub stale: bool,
+}
+
+impl BoardSummaryView {
+    pub fn new(path: &Path, now: u64) -> BoardSummaryView {
+        let s = crate::boards::Summary::load(path);
+        BoardSummaryView {
+            board: BoardInfo::new(path),
+            waiting: s.waiting,
+            asked: s.asked,
+            last: s.last,
+            last_agent: s.last_agent,
+            archived: crate::boards::is_archived(path),
+            stale: s.is_stale(now),
+        }
+    }
+}
+
 /// `GET /api/v2/boards/{id}/events?after=SEQ&wait=SECS`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Events {
@@ -199,7 +233,14 @@ pub fn board_id(path: &Path) -> String {
 /// The folder holding `.agents/todai/` for a board in a project, else the
 /// folder the file is in (`/` for a file at the root).
 pub fn board_project(path: &Path) -> String {
-    let dir = path.parent().unwrap_or(path);
+    let mut dir = path.parent().unwrap_or(path);
+    // An archived board (`.agents/todai/archive/x.jsonl`) keeps its project.
+    if dir.file_name().is_some_and(|d| d == crate::boards::ARCHIVE)
+        && let Some(up) = dir.parent()
+        && up.file_name().is_some_and(|t| t == "todai")
+    {
+        dir = up;
+    }
     let root = match (dir.file_name(), dir.parent()) {
         (Some(t), Some(agents)) if t == "todai" && agents.file_name().is_some_and(|a| a == ".agents") => {
             agents.parent().unwrap_or(agents)
@@ -273,5 +314,7 @@ mod tests {
         assert_eq!(p("/home/u/notes/plan.jsonl"), "notes");
         assert_eq!(p("/srv/todai/x.jsonl"), "todai", "a folder named todai outside .agents is just a folder");
         assert_eq!(p("/x.jsonl"), "/");
+        assert_eq!(p("/home/u/code/todai/.agents/todai/archive/old.jsonl"), "todai", "archived boards keep it");
+        assert_eq!(p("/home/u/archive/x.jsonl"), "archive", "a folder named archive elsewhere is just a folder");
     }
 }

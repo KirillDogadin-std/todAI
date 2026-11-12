@@ -276,3 +276,57 @@ fn forget_from_the_cli_reaches_a_running_server() {
     assert_eq!(f.get("/api/v2/boards").1, json!([]));
     assert_eq!(f.get(&format!("/api/v2/boards/{}", f.id())).0, 404);
 }
+
+#[test]
+fn summaries_list_what_waits() {
+    let f = Fixture::new();
+    let (status, rows) = f.get("/api/v2/summaries");
+    assert_eq!(status, 200);
+    let rows: Vec<todai_core::api::BoardSummaryView> = serde_json::from_value(rows).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].board, BoardInfo::new(f.log.path()));
+    assert_eq!((rows[0].waiting, rows[0].archived, rows[0].stale), (1, false, false), "d1 waits");
+    assert!(rows[0].last > 0 && rows[0].last_agent > 0);
+}
+
+#[test]
+fn archive_moves_the_board_and_gives_it_a_new_id() {
+    let f = Fixture::new();
+    // The fixture's board isn't under .agents/todai: put one where boards live.
+    let live = f.dir.path().join("proj/.agents/todai/main.jsonl");
+    std::fs::create_dir_all(live.parent().unwrap()).unwrap();
+    std::fs::write(&live, "").unwrap();
+    assert_eq!(f.post("/api/v2/boards", json!({"path": live})).0, 201);
+    let old = board_id(&live);
+
+    let (status, moved) = f.post(&format!("/api/v2/boards/{old}/archive"), json!({}));
+    assert_eq!(status, 200, "{moved}");
+    let moved: BoardInfo = serde_json::from_value(moved).unwrap();
+    let archived = f.dir.path().join("proj/.agents/todai/archive/main.jsonl");
+    assert!(archived.exists() && !live.exists());
+    assert_eq!((moved.id.as_str(), moved.project.as_str()), (board_id(&archived).as_str(), "proj"));
+    assert_eq!(f.get(&format!("/api/v2/boards/{old}")).0, 404, "the old id is gone");
+    let (_, rows) = f.get("/api/v2/summaries");
+    let rows: Vec<todai_core::api::BoardSummaryView> = serde_json::from_value(rows).unwrap();
+    assert!(rows.iter().any(|r| r.board.id == moved.id && r.archived));
+
+    // Archiving twice conflicts; unarchiving brings back the old id.
+    assert_eq!(f.post(&format!("/api/v2/boards/{}/archive", moved.id), json!({})).0, 409);
+    let (status, back) = f.post(&format!("/api/v2/boards/{}/unarchive", moved.id), json!({}));
+    assert_eq!((status, back["id"].as_str()), (200, Some(old.as_str())));
+    assert!(live.exists());
+
+    // An agent attached `main` again meanwhile: unarchiving onto it conflicts.
+    let (_, again) = f.post(&format!("/api/v2/boards/{old}/archive"), json!({}));
+    std::fs::write(&live, "").unwrap();
+    assert_eq!(f.post(&format!("/api/v2/boards/{}/unarchive", again["id"].as_str().unwrap()), json!({})).0, 409);
+}
+
+#[test]
+fn there_is_no_delete_through_the_api() {
+    let f = Fixture::new();
+    // DELETE /boards/{id} only unregisters; the file stays.
+    let r = f.agent.delete(f.url(&format!("/api/v2/boards/{}", f.id()))).header("Authorization", f.auth()).call();
+    assert_eq!(r.unwrap().status().as_u16(), 204);
+    assert!(f.log.path().exists());
+}

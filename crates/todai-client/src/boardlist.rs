@@ -10,8 +10,7 @@ use crate::nav::{Input, Key};
 use crate::tab::Location;
 use crate::tracked::Summary;
 
-/// No agent activity for this long, and nothing pending: a hint to archive.
-pub const STALE_AFTER_MS: u64 = 7 * 24 * 3600 * 1000;
+pub use todai_core::boards::STALE_AFTER_MS;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
@@ -82,10 +81,7 @@ impl BoardList {
             .map(|p| {
                 let summary = Summary::load(p);
                 let archived = manage::is_archived(p);
-                let stale = !archived
-                    && summary.waiting == 0
-                    && summary.asked == 0
-                    && now.saturating_sub(summary.last_agent.max(summary.last)) > STALE_AFTER_MS;
+                let stale = summary.is_stale(now);
                 let open = open.iter().any(|l| matches!(l, Location::File(f) if f == p));
                 Row { summary, archived, open, stale }
             })

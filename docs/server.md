@@ -75,7 +75,9 @@ in its field.
 ## Web app
 
 The server also serves a small web app at `/` for answering boards from a
-phone: board list by project, then a board with what waits for you,
+phone: board list by project (filter, last activity, stale and archived
+boards, archive or unarchive one, the selected ones, or all stale ones),
+then a board with what waits for you,
 elaboration threads and finished items. You can resolve, mark done, undo,
 reopen, trash, and ask for an elaboration (select text first to ask about
 just that, or tap **Ask** for the whole item). Changes show up live.
@@ -129,12 +131,35 @@ stable on their own.
 | `GET /api/v2/boards` | `[{"id", "name", "project"}]` |
 | `POST /api/v2/boards` `{"path"}` | register an existing `.jsonl` board by absolute path; loopback only (`403` otherwise); `201` with the board |
 | `DELETE /api/v2/boards/{id}` | unregister; `204`, or `404` |
+| `GET /api/v2/summaries` | `[BoardSummaryView]`: each served board with what a board list shows (below) |
+| `POST /api/v2/boards/{id}/archive` · `/unarchive` | move the board file into `.agents/todai/archive/` or back; `200` with the board under its **new id**; `409` if already there, or if a live board of that name exists again |
 | `GET /api/v2/boards/{id}` | the board as the operator sees it (`BoardView`, below) |
 | `GET /api/v2/boards/{id}/events?after=SEQ&wait=SECS` | `{"events", "last_seq", "reset"?}`: events with `seq > after` |
 | `POST /api/v2/boards/{id}/actions` | append one operator event (body: an event without `seq`, `ts`, `by`); returns the written event |
 
 Any other path under `/api/` (including the unversioned `/api/boards`) gets
 `404` with the version this server speaks.
+
+### Board summaries and archiving
+
+```json
+{"board": {"id": "…", "name": "main", "project": "todai"},
+ "waiting": 2, "asked": 1, "last": 1794258201740, "last_agent": 1794258201740,
+ "archived": false, "stale": false}
+```
+
+`waiting` counts pending decisions and open todos, `asked` elaborations
+waiting for an agent. `last` is the newest event in Unix ms (the file's age
+if it has none), `last_agent` the newest agent event. `stale`: nothing
+waits and no one wrote for a week. These two routes and the type came in
+todai 0.7 without bumping the API version: they are additions, and no
+existing response changed.
+
+Archiving moves the file, and a board's id is a hash of its path, so the
+board gets a new id; the old one answers `404` afterwards. There is
+deliberately no delete: any token holder may archive, which is reversible.
+The window and the TUI can also delete, into the trash of the machine they
+run on.
 
 ### Board view
 

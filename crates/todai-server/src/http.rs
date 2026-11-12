@@ -9,7 +9,9 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tiny_http::{Header, Method, Request, Response};
-use todai_core::api::{API_VERSION, ApiError, BoardInfo, BoardView, Events, Health, MAX_WAIT_SECS, Register};
+use todai_core::api::{
+    API_VERSION, ApiError, BoardInfo, BoardSummaryView, BoardView, Events, Health, MAX_WAIT_SECS, Register,
+};
 use todai_core::store::{Actor, Event, Kind, Log};
 
 use crate::changes::Changes;
@@ -137,7 +139,20 @@ fn handle(shared: &Shared, req: &mut Request) -> Reply {
                 shared.registry.list().iter().filter(|b| b.path.exists()).map(Board::info).collect();
             Ok(json(200, &boards))
         }
+        (Method::Get, ["summaries"]) => {
+            let now = todai_core::store::now_ms();
+            let rows: Vec<BoardSummaryView> = shared
+                .registry
+                .list()
+                .iter()
+                .filter(|b| b.path.exists())
+                .map(|b| BoardSummaryView::new(&b.path, now))
+                .collect();
+            Ok(json(200, &rows))
+        }
         (Method::Post, ["boards"]) => register(shared, req),
+        (Method::Post, ["boards", id, "archive"]) => board(id).map(|p| relocate(shared, id, &p, true)),
+        (Method::Post, ["boards", id, "unarchive"]) => board(id).map(|p| relocate(shared, id, &p, false)),
         (Method::Get, ["boards", id]) => board(id).map(|p| state(&p)),
         (Method::Delete, ["boards", id]) => Ok(match shared.registry.remove(id) {
             Ok(true) => Reply { status: 204, body: None, content_type: "" },
@@ -185,6 +200,23 @@ fn register(shared: &Shared, req: &mut Request) -> Result<Reply, Reply> {
         Ok(board) => Ok(json(201, &board.info())),
         Err(e) => Err(error(422, format!("{e:#}"))),
     }
+}
+
+/// Archives (or unarchives) a board: the file moves, so the server serves
+/// it under its new path, and so its new id, which the reply carries. Any
+/// token holder may: it is reversible (unlike delete, which the API leaves
+/// out).
+fn relocate(shared: &Shared, id: &str, path: &Path, archive: bool) -> Reply {
+    let moved = if archive { todai_core::boards::archive(path) } else { todai_core::boards::unarchive(path) };
+    let to = match moved {
+        Ok(to) => to,
+        // Already (un)archived, or a live board of that name exists again.
+        Err(e) => return error(409, format!("{e:#}")),
+    };
+    if let Err(e) = shared.registry.add(&to).and_then(|_| shared.registry.remove(id)) {
+        return error(500, format!("moved to {}, but the registry failed: {e:#}", to.display()));
+    }
+    json(200, &BoardInfo::new(&to))
 }
 
 /// The folded board, for clients that don't fold events themselves.
