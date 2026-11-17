@@ -369,3 +369,25 @@ fn wrong_tokens_lock_the_address_out() {
     assert_eq!(status, 429, "locked out even with the right token: {body}");
     assert_eq!(f.agent.get(f.url("/api/health")).call().unwrap().status(), 200, "health stays open");
 }
+
+#[test]
+fn device_tokens_work_until_revoked_and_agent_tokens_cannot_answer() {
+    let f = Fixture::new();
+    let tokens = Tokens::load(&f.dir.path().join("server")).unwrap();
+    let phone = tokens.add("phone", Role::Operator).unwrap();
+    let bot = tokens.add("bot", Role::Agent).unwrap();
+    let get = |token: &str| f.agent.get(f.url("/api/v2/boards")).header("Authorization", format!("Bearer {token}")).call().unwrap().status();
+    assert_eq!(get(&phone), 200, "a running server sees new devices at once");
+    assert_eq!(get(&bot), 200, "agents may read");
+
+    let answer = json!({"type": "decision.resolve", "id": "d1", "text": "yes"});
+    let post = |token: &str| {
+        f.agent.post(f.url(&format!("/api/v2/boards/{}/actions", f.id()))).header("Authorization", format!("Bearer {token}")).send_json(&answer).unwrap().status()
+    };
+    assert_eq!(post(&bot), 403, "an agent token never answers for the operator");
+    assert_eq!(post(&phone), 200);
+
+    assert!(tokens.revoke("phone").unwrap());
+    assert_eq!(get(&phone), 401);
+    assert_eq!(f.get("/api/v2/boards").0, 200, "the main token is unaffected");
+}

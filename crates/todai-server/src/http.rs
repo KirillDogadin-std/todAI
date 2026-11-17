@@ -14,6 +14,7 @@ use todai_core::api::{
 };
 use todai_core::store::{Actor, Event, Kind, Log};
 
+use crate::auth::{Principal, Role, Tokens};
 use crate::changes::Changes;
 use crate::limit::{Limiter, Policy};
 use crate::{Board, Registry};
@@ -24,7 +25,7 @@ const MAX_IN_FLIGHT: usize = 64;
 const MAX_BODY: u64 = 1 << 20;
 
 pub struct Shared {
-    pub token: String,
+    pub tokens: Tokens,
     registry: Registry,
     in_flight: AtomicUsize,
     changes: Changes,
@@ -32,8 +33,8 @@ pub struct Shared {
 }
 
 impl Shared {
-    pub fn new(token: String, registry: Registry) -> Shared {
-        Shared { token, registry, in_flight: AtomicUsize::new(0), changes: Changes::new(), limiter: Limiter::new(Policy::default()) }
+    pub fn new(tokens: Tokens, registry: Registry) -> Shared {
+        Shared { tokens, registry, in_flight: AtomicUsize::new(0), changes: Changes::new(), limiter: Limiter::new(Policy::default()) }
     }
 }
 
@@ -131,12 +132,12 @@ fn handle(shared: &Shared, req: &mut Request) -> Reply {
     {
         return error(429, format!("too many wrong tokens from this address; try again in {secs} s"));
     }
-    if !authorized(req, &shared.token) {
+    let Some(who) = authorized(req, &shared.tokens) else {
         if let Some(ip) = ip {
             shared.limiter.failure(ip);
         }
         return error(401, "missing or wrong token (Authorization: Bearer ...)");
-    }
+    };
     if let Some(ip) = ip {
         shared.limiter.success(ip);
     }
@@ -175,24 +176,20 @@ fn handle(shared: &Shared, req: &mut Request) -> Reply {
             Err(e) => error(500, format!("{e:#}")),
         }),
         (Method::Get, ["boards", id, "events"]) => board(id).map(|p| events(&shared.changes, &p, query)),
-        (Method::Post, ["boards", id, "actions"]) => board(id).map(|p| action(&p, req)),
+        (Method::Post, ["boards", id, "actions"]) => board(id).map(|p| action(&p, &who, req)),
         _ => Err(error(404, format!("no route {method} {path}"))),
     };
     result.unwrap_or_else(|e| e)
 }
 
-/// Constant-time, so response timing doesn't leak how much of a guess matched.
-fn authorized(req: &Request, token: &str) -> bool {
-    let Some(given) = req
+/// The caller, if the request carries a known token.
+fn authorized(req: &Request, tokens: &Tokens) -> Option<Principal> {
+    let given = req
         .headers()
         .iter()
         .find(|h| h.field.equiv("Authorization"))
-        .and_then(|h| h.value.as_str().strip_prefix("Bearer "))
-    else {
-        return false;
-    };
-    let (a, b) = (given.trim().as_bytes(), token.as_bytes());
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+        .and_then(|h| h.value.as_str().strip_prefix("Bearer "))?;
+    tokens.identify(given)
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(req: &mut Request) -> Result<T, Reply> {
@@ -304,11 +301,14 @@ fn poll(changes: &Changes, log: &Log, after: u64, deadline: Instant) -> anyhow::
 
 /// Appends one operator event. Agent events are refused: agents write board
 /// files directly, and the token is the operator's.
-fn action(path: &Path, req: &mut Request) -> Reply {
+fn action(path: &Path, who: &Principal, req: &mut Request) -> Reply {
     let mut kind: Kind = match read_json(req) {
         Ok(k) => k,
         Err(e) => return e,
     };
+    if who.role != Role::Operator {
+        return error(403, "an agent token can't post operator actions");
+    }
     if kind.allowed_actor() != Some(Actor::Operator) {
         return error(403, "only operator actions can be posted");
     }

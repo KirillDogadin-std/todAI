@@ -125,11 +125,16 @@ pub fn load_token(dir: &Path) -> Result<String> {
 
 /// Writes a fresh random token, readable only by the user.
 pub fn rotate_token(dir: &Path) -> Result<String> {
-    let mut bytes = [0u8; 32];
-    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
-    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let token = random_token()?;
     write_atomic(&dir.join("token"), token.as_bytes(), 0o600)?;
     Ok(token)
+}
+
+/// 32 random bytes as hex.
+pub fn random_token() -> Result<String> {
+    let mut bytes = [0u8; 32];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// Records where this server answers locally. A wildcard bind is reachable
@@ -145,7 +150,7 @@ pub fn write_addr(dir: &Path, mut addr: SocketAddr) -> Result<()> {
 }
 
 /// Write-then-rename so readers never see half a file.
-fn write_atomic(path: &Path, data: &[u8], mode: u32) -> Result<()> {
+pub(crate) fn write_atomic(path: &Path, data: &[u8], mode: u32) -> Result<()> {
     let dir = path.parent().unwrap();
     std::fs::create_dir_all(dir)?;
     let tmp = path.with_extension("tmp");

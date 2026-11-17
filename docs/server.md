@@ -24,11 +24,13 @@ locked append as every other writer.
 ```sh
 cargo build --release -p todai-server      # or: cargo install --path crates/todai-server
 todai-server [--listen ADDR] [FILE...]     # serve; FILEs are registered too
-todai-server token [--rotate]              # print (or replace) the access token
+todai-server token [--rotate]              # print (or replace) the main access token
+todai-server device add NAME [--agent]     # a token for one device (or one remote agent), printed once
+todai-server device list | revoke NAME     # device names and roles; cut off one device
 todai-server boards                        # list registered boards; (missing) if the file is gone
 todai-server forget FILE                   # stop serving a board
 todai-server prune                         # forget boards whose file was deleted (also done at startup)
-todai-server pair [--host HOST]            # link + QR code that open the web app with the token
+todai-server pair [--host HOST] [--device NAME]   # link + QR code that open the web app with a device token
 todai-server service install [--listen ADDR] [--no-start] [--dry-run]   # run at login (systemd user unit)
 todai-server service status | uninstall
 ```
@@ -103,8 +105,11 @@ todai-server pair --host https://box.tailnet.ts.net     # behind `tailscale serv
 Scan the QR code. The token travels in the link's `#fragment`, which
 browsers never send to the server or put in logs; the app keeps it in the
 browser's storage and removes it from the address bar. Anyone who sees the
-QR code or link can answer your boards, same as with the token itself; to
-revoke every device, run `todai-server token --rotate` and pair again. The
+QR code or link can answer your boards, same as with the token itself.
+The link carries the token of device `phone` (`--device NAME` for
+another), created on first use, so `todai-server device revoke phone`
+cuts off that phone and nothing else; `todai-server token --rotate`
+replaces the main token, which this machine's own clients use. The
 pairing screen also takes a pasted token.
 
 The app is plain HTML, CSS and JavaScript in `crates/todai-server/web/`,
@@ -117,7 +122,8 @@ In `$XDG_STATE_HOME/todai/server/` (default `~/.local/state/todai/server/`):
 
 | File | |
 |---|---|
-| `token` | the bearer token, 0600; created on first start |
+| `token` | the main bearer token, 0600; created on first start |
+| `tokens.json` | device tokens with names and roles (`device add`), 0600 |
 | `boards.json` | registered board paths |
 | `addr` | where the running server answers locally; how `todai attach` finds it |
 | `service.json` | what `service install` wrote, for `uninstall` |
@@ -126,8 +132,9 @@ In `$XDG_STATE_HOME/todai/server/` (default `~/.local/state/todai/server/`):
 
 All bodies are JSON. Routes are versioned under `/api/v2`; only
 `/api/health` is not, so a client can check compatibility first. Every
-versioned route needs `Authorization: Bearer TOKEN`; a missing or wrong token
-gets `401`. Errors come back as `{"error": "..."}`.
+versioned route needs `Authorization: Bearer TOKEN` (the main token or a
+device token); a missing or wrong token gets `401`. Tokens made with
+`device add --agent` may read but get `403` for operator actions. Errors come back as `{"error": "..."}`.
 
 The contract is the types in `crates/todai-core/src/api.rs`, not the
 internal board state: `BoardView` and friends are built from it in one place

@@ -7,6 +7,7 @@
 //! events through `Log::append` like every other writer. The API is
 //! documented in `docs/server.md`.
 
+mod auth;
 mod changes;
 mod http;
 mod limit;
@@ -22,6 +23,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Args as ClapArgs, Subcommand};
 use todai_core::api::DEFAULT_LISTEN;
 
+pub use auth::{Device, Role, Tokens};
 pub use registry::{Board, Registry};
 
 /// `todai-server` and `todai serve` take these.
@@ -39,6 +41,22 @@ pub struct Args {
 }
 
 #[derive(Subcommand, Debug, Clone)]
+enum DeviceCmd {
+    /// Create a token for a device and print it.
+    Add {
+        name: String,
+        /// A token for an agent on another machine: it may post agent
+        /// events, and can't answer anything for you.
+        #[arg(long)]
+        agent: bool,
+    },
+    /// List device tokens (names and roles, not the tokens).
+    List,
+    /// Delete a device's token; that device gets 401 from now on.
+    Revoke { name: String },
+}
+
+#[derive(Subcommand, Debug, Clone)]
 enum Cmd {
     /// Print the access token clients need (creating it if there is none).
     Token {
@@ -46,6 +64,10 @@ enum Cmd {
         #[arg(long)]
         rotate: bool,
     },
+    /// Tokens for single devices (a phone, a remote window), revocable one
+    /// by one; the main token stays for this machine's own clients.
+    #[command(subcommand)]
+    Device(DeviceCmd),
     /// List the registered boards.
     Boards,
     /// Stop serving a board (the file is left alone).
@@ -60,6 +82,10 @@ enum Cmd {
         /// `tailscale serve`. Defaults to the address the server listens on.
         #[arg(long)]
         host: Option<String>,
+        /// The device token to put in the link, created if it doesn't exist
+        /// (`todai-server device revoke NAME` cuts off just that device).
+        #[arg(long, default_value = "phone")]
+        device: String,
     },
     /// Run this server as a user service (systemd), started at login.
     /// Opt-in: nothing is installed until you run `install`.
@@ -94,7 +120,29 @@ pub fn run(args: Args) -> Result<()> {
             // On stderr, so piping `prune` gets only the removed boards.
             eprintln!("pruned {} board(s)", pruned.len());
         }
-        Some(Cmd::Pair { host }) => pair(&dir, host.as_deref())?,
+        Some(Cmd::Pair { host, device }) => pair(&dir, host.as_deref(), &device)?,
+        Some(Cmd::Device(cmd)) => {
+            let tokens = Tokens::load(&dir)?;
+            match cmd {
+                DeviceCmd::Add { name, agent } => {
+                    println!("{}", tokens.add(&name, if agent { Role::Agent } else { Role::Operator })?)
+                }
+                DeviceCmd::List => {
+                    for d in tokens.devices()? {
+                        let role = match d.role {
+                            Role::Operator => "operator",
+                            Role::Agent => "agent",
+                        };
+                        println!("{}  {role}", d.name);
+                    }
+                }
+                DeviceCmd::Revoke { name } => {
+                    if !tokens.revoke(&name)? {
+                        bail!("no device named {name} (see `todai-server device list`)");
+                    }
+                }
+            }
+        }
         Some(Cmd::Service(cmd)) => service::run(cmd, &dir)?,
         None => {
             let files = args.files.iter().map(std::path::absolute).collect::<std::io::Result<Vec<_>>>()?;
@@ -139,13 +187,13 @@ impl Server {
     /// Binds the socket, loads (or creates) the token and registry, and
     /// records the address so local `todai` commands can find this server.
     pub fn bind(cfg: &Config) -> Result<Server> {
-        let token = registry::load_token(&cfg.dir)?;
+        let tokens = Tokens::load(&cfg.dir)?;
         let registry = Registry::load(&cfg.dir)?;
         for b in &cfg.boards {
             registry.add(b)?;
         }
         let http = tiny_http::Server::http(&cfg.listen).map_err(|e| anyhow::anyhow!("listen on {}: {e}", cfg.listen))?;
-        let server = Server { http: Arc::new(http), shared: Arc::new(http::Shared::new(token, registry)) };
+        let server = Server { http: Arc::new(http), shared: Arc::new(http::Shared::new(tokens, registry)) };
         registry::write_addr(&cfg.dir, server.addr())?;
         Ok(server)
     }
@@ -154,8 +202,9 @@ impl Server {
         self.http.server_addr().to_ip().expect("bound to a TCP address")
     }
 
-    pub fn token(&self) -> &str {
-        &self.shared.token
+    /// The main token.
+    pub fn token(&self) -> String {
+        self.shared.tokens.main().unwrap_or_default()
     }
 
     /// Serves until the process exits. Each request gets its own thread, so
@@ -171,7 +220,7 @@ impl Server {
     pub fn spawn(self) -> Handle {
         let http = self.http.clone();
         let addr = self.addr();
-        let token = self.shared.token.clone();
+        let token = self.token();
         std::thread::spawn(move || self.run());
         Handle { http, addr, token }
     }
@@ -197,8 +246,8 @@ pub fn pair_url(base: &str, token: &str) -> String {
     format!("{}/#token={token}", base.trim_end_matches('/'))
 }
 
-fn pair(dir: &Path, host: Option<&str>) -> Result<()> {
-    let token = registry::load_token(dir)?;
+fn pair(dir: &Path, host: Option<&str>, device: &str) -> Result<()> {
+    let token = Tokens::load(dir)?.get_or_add(device, Role::Operator)?;
     let addr = local(dir).map(|(a, _)| a);
     let port = addr.map_or_else(|| DEFAULT_LISTEN.rsplit(':').next().unwrap_or("7341").to_owned(), |a| a.port().to_string());
     let base = match host {
