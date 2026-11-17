@@ -42,7 +42,9 @@ commit `Release X.Y.Z`, tag it `git tag -a vX.Y.Z -m "todai X.Y.Z"`, and push
 the branch and the tag. `.github/workflows/release.yml` refuses a tag that
 doesn't match the version, tests, builds in `rust:1.92-bullseye` (glibc 2.30
 floor), and attaches the tarball from `scripts/package.sh` and its `.sha256`
-to a **draft** release. Write the notes on the draft
+to a **draft** release. aarch64 Linux and macOS (Apple silicon) tarballs are
+built too, best effort: if one is missing from the draft, its job failed
+(check it, or say so in the notes). Write the notes on the draft
 (`gh release edit vX.Y.Z --notes-file NOTES.md`), then publish it.
 
 ## Rules that are easy to break

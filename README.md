@@ -24,7 +24,7 @@ interrupted.
 
 ## Install
 
-**Prebuilt (Linux x86_64, glibc 2.30+):** download `todai-*-x86_64-linux-gnu.tar.gz`
+**Prebuilt (Linux x86_64, glibc 2.30+):** download `todai-*-x86_64-linux-gnu.tar.gz` (releases may also carry `aarch64-linux-gnu` and `aarch64-apple-darwin` builds)
 from [Releases](../../releases), then
 
 ```sh

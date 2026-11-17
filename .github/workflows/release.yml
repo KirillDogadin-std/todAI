@@ -1,7 +1,11 @@
 name: Release
 
-# Pushing a tag vX.Y.Z builds the release tarball and attaches it to a draft
-# GitHub release. Write the notes on the draft, then publish it.
+# Pushing a tag vX.Y.Z builds the release tarballs and attaches them to a
+# draft GitHub release. Write the notes on the draft, then publish it.
+#
+# x86_64 Linux is required: without it there is no release. aarch64 Linux
+# and macOS (Apple silicon) are best effort: a failure there leaves their
+# tarball out of the draft (say so in the notes) instead of blocking it.
 
 on:
   push:
@@ -34,25 +38,62 @@ jobs:
       - run: scripts/package.sh dist
       - uses: actions/upload-artifact@v4
         with:
-          name: dist
+          name: dist-x86_64-linux
+          path: dist/
+          if-no-files-found: error
+
+  # Best effort: continue-on-error, and `release` doesn't wait for success.
+  build-aarch64-linux:
+    needs: build
+    continue-on-error: true
+    runs-on: ubuntu-24.04-arm
+    container: rust:1.92-bullseye
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - run: scripts/package.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-aarch64-linux
+          path: dist/
+          if-no-files-found: error
+
+  build-macos:
+    needs: build
+    continue-on-error: true
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      # rustup comes with the runner and follows rust-toolchain.toml.
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - run: scripts/package.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-aarch64-macos
           path: dist/
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [build, build-aarch64-linux, build-macos]
+    # Runs when the required build passed, whatever the extra ones did.
+    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: dist
+          pattern: dist-*
+          merge-multiple: true
           path: dist
-      - name: Draft release with the tarball
+      - name: Draft release with the tarballs
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
+          ls dist
           gh release create "$GITHUB_REF_NAME" dist/* --draft --verify-tag \
               --title "💀 todai ${GITHUB_REF_NAME#v}" \
               --notes "Notes to be written before publishing."
