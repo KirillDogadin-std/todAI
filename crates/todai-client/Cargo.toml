@@ -15,6 +15,12 @@ todai-core.workspace = true
 libc = "0.2.191"
 ureq = { version = "3.5.0", default-features = false, features = ["json"] }
 
+[features]
+default = ["tls"]
+# HTTPS to servers behind `tailscale serve` or a TLS proxy (rustls + ring,
+# Mozilla's root certificates). Without it the client speaks plain HTTP only.
+tls = ["ureq/rustls"]
+
 [dev-dependencies]
 tempfile.workspace = true
 todai-server.workspace = true

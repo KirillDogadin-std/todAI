@@ -70,8 +70,11 @@ Or, in the window or `todai-tui`: open the board list (`Ctrl+O`), press
 
 The token is saved (0600, `~/.local/state/todai/remotes.json`), so later
 `todai open --server URL` and session restore need no flag. `$TODAI_TOKEN`
-works too. The desktop client speaks plain HTTP only; use the VPN route
-for it.
+works too. The window and the TUI speak HTTPS as well (`--server
+https://box.tailnet.ts.net` behind `tailscale serve`, or a proxy), checking
+the certificate against Mozilla's roots: a self-signed certificate is
+refused. Builds without the client's `tls` feature
+(`--no-default-features`) speak plain HTTP only.
 
 Opened without board names, the server is **followed**: boards registered
 there later (an agent's `todai attach` on that machine) open as new tabs
@@ -311,5 +314,6 @@ id, resolving a withdrawn decision, ...) gets `422` and is not written.
   not), doubling with each lockout up to an hour; a right token resets it.
   Behind a reverse proxy on the same machine every client is `127.0.0.1`,
   so one client guessing locks out all of them: there, let the proxy limit.
-- No TLS or CORS in-process.
+- No TLS or CORS in-process: the server itself speaks plain HTTP (see
+  "Reach it from another machine" for HTTPS in front of it).
 - The web app's files are served without a token; they hold no data.

@@ -26,7 +26,7 @@ remote frontends use instead of the file.
 | `crates/todai-core` | serde | the event log, inbox text, API wire types, XDG paths; no GUI, no network |
 | `crates/todai-memory` | rusqlite (bundled), serde, unicode tables | decision memory: an append-only SQLite event store, one database per project in `$XDG_STATE_HOME/todai/memory/`; depends on nothing else in todai |
 | `crates/todai-server` | core, tiny_http | the HTTP server, as a library and the `todai-server` binary; no GUI |
-| `crates/todai-client` | core, notify, ureq | what every frontend shares: open boards, keyboard navigation, card text, the server client, the window socket, config and session; no GUI |
+| `crates/todai-client` | core, notify, ureq (rustls with the `tls` feature) | what every frontend shares: open boards, keyboard navigation, card text, the server client, the window socket, config and session; no GUI |
 | `crates/todai-tui` | core, client, ratatui | `todai-tui`: the board in a terminal; no GUI |
 | `todai` (repo root) | core, memory, client, server, egui | the CLI, the window, agent integration; `todai serve` embeds the server |
 
@@ -130,7 +130,15 @@ window when nothing answers.
   for 0.12. The server only uses `Server::http`, `incoming_requests`,
   `Request` (url, method, headers, remote address, body reader, respond)
   and `unblock`, so switching is a few lines in `lib.rs` and `http.rs`
-  when the floor allows it.
+  when the floor allows it. `stream.rs` also uses `into_writer`.
+- **No in-process TLS on the server** yet: tiny_http 0.12's `ssl-rustls`
+  is built on rustls 0.20, which has unfixed advisories. With the fork
+  (rustls 0.23) it is its `ssl-rustls` feature plus `--tls-cert/--tls-key`
+  flags into `Server::bind`. Until then: `tailscale serve` or a proxy.
+- **Client TLS: rustls with ring and webpki roots**, behind todai-client's
+  default `tls` feature: +1.4 MB for the window and the TUI binaries
+  (24.3 vs 22.9 MB, 4.4 vs 3.1 MB release), nothing for the server, which
+  doesn't link it. Untouched until a tab talks HTTPS.
 
 ## Known gaps
 
