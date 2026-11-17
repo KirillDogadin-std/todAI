@@ -458,3 +458,34 @@ fn the_change_feed_follows_every_board_and_the_registry() {
 
     assert_eq!(f.get("/api/v2/changes?cursor=junk").0, 400);
 }
+
+#[test]
+fn the_stream_pushes_feed_answers_as_events() {
+    use std::io::{BufRead, BufReader, Write};
+    let f = Fixture::new();
+    assert_eq!(f.agent.get(f.url("/api/v2/stream")).call().unwrap().status(), 401);
+
+    let mut conn = std::net::TcpStream::connect(f.server.addr).unwrap();
+    conn.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    write!(conn, "GET /api/v2/stream HTTP/1.1\r\nHost: x\r\nAuthorization: {}\r\n\r\n", f.auth()).unwrap();
+    let mut lines = BufReader::new(conn).lines().map(|l| l.unwrap());
+    assert_eq!(lines.next().unwrap(), "HTTP/1.1 200 OK");
+    assert!(lines.by_ref().take_while(|l| !l.is_empty()).any(|l| l.starts_with("Content-Type: text/event-stream")));
+    let mut next_feed = || -> todai_core::api::ChangeFeed {
+        loop {
+            let l = lines.next().unwrap();
+            if let Some(data) = l.strip_prefix("data: ") {
+                return serde_json::from_str(data).unwrap();
+            }
+        }
+    };
+    let base = next_feed();
+    assert!(base.boards[0].new, "first a baseline");
+
+    let start = Instant::now();
+    f.log.append(Actor::Agent, |_| Ok(Kind::TodoAdd { id: "t1".into(), title: "x".into(), context: None })).unwrap();
+    let pushed = next_feed();
+    assert!(start.elapsed() < Duration::from_secs(5));
+    assert_eq!(pushed.boards[0].events.len(), 1);
+    assert_ne!(pushed.cursor, base.cursor);
+}

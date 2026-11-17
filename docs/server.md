@@ -172,6 +172,7 @@ stable on their own.
 | `GET /api/v2/boards/{id}` | the board as the operator sees it (`BoardView`, below) |
 | `GET /api/v2/boards/{id}/events?after=SEQ&wait=SECS` | `{"events", "last_seq", "reset"?}`: events with `seq > after` |
 | `GET /api/v2/changes?cursor=C&wait=SECS` | `ChangeFeed`: what changed on any served board since `cursor`, in one long-poll (below) |
+| `GET /api/v2/stream?cursor=C` | the same answers pushed as server-sent events on one open response (below) |
 | `POST /api/v2/boards/{id}/actions` | append one operator event (body: an event without `seq`, `ts`, `by`); returns the written event |
 
 Any other path under `/api/` (including the unversioned `/api/boards`) gets
@@ -273,6 +274,16 @@ file deleted). `reset` means the file was replaced and `events` is all of
 it. When the wait runs out the answer is empty with the same cursor. A
 malformed cursor gets `400`: start over without one. Added in todai 0.8
 without an API version bump; older servers answer `404`.
+
+`GET /api/v2/stream` pushes the same answers instead: one response that
+stays open, `text/event-stream`, each answer as `event: changes` with the
+`ChangeFeed` JSON as `data:` (the first is a baseline unless you pass a
+`cursor`), and a `: still here` comment every 20 s. Reconnect with the
+last cursor if it drops. It needs the `Authorization` header like every
+route, so browsers read it with `fetch`, not `EventSource`. The web app
+uses it and falls back to long-polling `/changes` when nothing arrives
+within 10 s (a proxy that buffers responses). Each open stream holds one of
+the 64 request threads.
 
 ### Posting actions
 

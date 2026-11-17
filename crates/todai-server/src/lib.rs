@@ -14,6 +14,7 @@ mod http;
 mod limit;
 mod registry;
 mod service;
+mod stream;
 
 use std::io::IsTerminal;
 use std::net::SocketAddr;

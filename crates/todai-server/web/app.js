@@ -71,11 +71,65 @@ function keepingFocus(draw) {
 
 // ---- the change feed ------------------------------------------------------------
 //
-// One long-poll on /changes follows every board (docs/server.md), for as long
-// as the app is open. The screen on show gets each answer (`screen.onFeed`),
-// and agent posts become notifications.
+// The app follows every board for as long as it is open (docs/server.md):
+// pushed over /stream (server-sent events) when that works, else by
+// long-polling /changes, e.g. behind a proxy that buffers the stream. Both
+// deliver the same answers; the screen on show gets each one
+// (`screen.onFeed`), and agent posts become notifications.
 
-const feed = { cursor: null, running: false, abort: null };
+const feed = { cursor: null, running: false, abort: null, noStream: false };
+
+// One answer from either transport.
+function onFeedAnswer(f) {
+  const baseline = !feed.cursor;
+  feed.cursor = f.cursor;
+  if ($("status").className === "error") status("live", "ok");
+  if (!baseline && (f.boards.length || f.removed?.length)) {
+    notifyAgentPosts(f);
+    screen?.onFeed?.(f);
+  }
+}
+
+// Reads /stream until it ends. Aborts with "silent" if nothing arrives at
+// first (a buffering proxy: use long-poll) and with "stale" if heartbeats
+// stop (reconnect).
+async function streamOnce(ctl) {
+  const q = feed.cursor ? `?cursor=${encodeURIComponent(feed.cursor)}` : "";
+  const res = await fetch(`${API}/stream${q}`, { headers: { Authorization: `Bearer ${token()}` }, signal: ctl.signal });
+  if (res.status === 401) throw new AuthError("the token was not accepted");
+  if (!res.ok || !res.body) {
+    const err = new Error(`HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  let got = false;
+  let timer = null;
+  const watch = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => ctl.abort(got ? "stale" : "silent"), got ? 45000 : 10000);
+  };
+  watch();
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buf += value;
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const msg = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        got = true;
+        watch();
+        const data = msg.split("\n").filter((l) => l.startsWith("data: ")).map((l) => l.slice(6)).join("\n");
+        if (data && msg.split("\n").includes("event: changes")) onFeedAnswer(JSON.parse(data));
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function runFeed() {
   if (feed.running) return;
@@ -84,19 +138,20 @@ async function runFeed() {
     const ctl = new AbortController();
     feed.abort = ctl;
     try {
-      const q = feed.cursor ? `?cursor=${encodeURIComponent(feed.cursor)}&wait=${LONG_POLL}` : "";
-      const f = await api(`/changes${q}`, { signal: ctl.signal });
-      const baseline = !feed.cursor;
-      feed.cursor = f.cursor;
-      if ($("status").className === "error") status("live", "ok");
-      if (!baseline && (f.boards.length || f.removed?.length)) {
-        notifyAgentPosts(f);
-        screen?.onFeed?.(f);
+      if (!feed.noStream) {
+        await streamOnce(ctl);
+        continue; // the stream ended (server restart?): reconnect
       }
+      const q = feed.cursor ? `?cursor=${encodeURIComponent(feed.cursor)}&wait=${LONG_POLL}` : "";
+      onFeedAnswer(await api(`/changes${q}`, { signal: ctl.signal }));
     } catch (e) {
-      if (e.name === "AbortError") continue; // restarted on purpose
+      if (ctl.signal.aborted) {
+        if (ctl.signal.reason === "silent") feed.noStream = true;
+        continue; // restarted on purpose, or a stalled stream
+      }
       if (e instanceof AuthError) break;
       if (e.status === 400) feed.cursor = null; // a cursor this server can't read
+      if (e.status === 404) feed.noStream = true; // a server without /stream
       status("offline, retrying…", "error");
       await sleep(3000);
     }

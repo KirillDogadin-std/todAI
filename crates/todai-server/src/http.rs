@@ -1,6 +1,7 @@
 //! Request routing: the web app's static files at `/`, and the handlers
 //! behind `/api/...`.
 
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
@@ -26,9 +27,9 @@ const MAX_BODY: u64 = 1 << 20;
 
 pub struct Shared {
     pub tokens: Tokens,
-    registry: Registry,
+    pub(crate) registry: Registry,
     in_flight: AtomicUsize,
-    changes: Changes,
+    pub(crate) changes: Changes,
     limiter: Limiter,
 }
 
@@ -86,8 +87,10 @@ pub fn dispatch(shared: &Arc<Shared>, req: Request) {
     let shared = shared.clone();
     std::thread::spawn(move || {
         let mut req = req;
-        let reply = handle(&shared, &mut req);
-        respond(req, reply);
+        match handle(&shared, &mut req) {
+            Outcome::Reply(reply) => respond(req, reply),
+            Outcome::Stream(cursor) => crate::stream::serve(&shared, req, cursor),
+        }
         shared.in_flight.fetch_sub(1, Ordering::SeqCst);
     });
 }
@@ -112,7 +115,50 @@ fn respond(req: Request, reply: Reply) {
     let _ = result; // the client went away; nothing to do
 }
 
-fn handle(shared: &Shared, req: &mut Request) -> Reply {
+/// What a request gets: one reply, or the event stream (which writes its
+/// own response).
+enum Outcome {
+    Reply(Reply),
+    Stream(Option<BTreeMap<String, u64>>),
+}
+
+fn handle(shared: &Shared, req: &mut Request) -> Outcome {
+    let url = req.url().to_owned();
+    let (path, query) = url.split_once('?').unwrap_or((&url, ""));
+    if req.method() == &Method::Get && path.trim_end_matches('/') == format!("/api/v{API_VERSION}/stream") {
+        // Same checks as every route: answer through `route` unless they pass.
+        if let Err(reply) = check_auth(shared, req) {
+            return Outcome::Reply(reply);
+        }
+        return match parse_cursor(query) {
+            Ok(c) => Outcome::Stream(c),
+            Err(reply) => Outcome::Reply(reply),
+        };
+    }
+    Outcome::Reply(route(shared, req))
+}
+
+/// The limiter and the token: the caller, or the reply refusing them.
+fn check_auth(shared: &Shared, req: &Request) -> Result<Principal, Reply> {
+    let ip = req.remote_addr().map(|a| a.ip());
+    if let Some(ip) = ip
+        && let Err(secs) = shared.limiter.check(ip)
+    {
+        return Err(error(429, format!("too many wrong tokens from this address; try again in {secs} s")));
+    }
+    let Some(who) = authorized(req, &shared.tokens) else {
+        if let Some(ip) = ip {
+            shared.limiter.failure(ip);
+        }
+        return Err(error(401, "missing or wrong token (Authorization: Bearer ...)"));
+    };
+    if let Some(ip) = ip {
+        shared.limiter.success(ip);
+    }
+    Ok(who)
+}
+
+fn route(shared: &Shared, req: &mut Request) -> Reply {
     let url = req.url().to_owned();
     let (path, query) = url.split_once('?').unwrap_or((&url, ""));
     let segs: Vec<&str> = path.trim_matches('/').split('/').collect();
@@ -131,21 +177,10 @@ fn handle(shared: &Shared, req: &mut Request) -> Reply {
         ["api", ..] => return error(404, format!("no route {method} {path}; this server speaks /api/{version}")),
         _ => return error(404, "not found; the API is under /api"),
     };
-    let ip = req.remote_addr().map(|a| a.ip());
-    if let Some(ip) = ip
-        && let Err(secs) = shared.limiter.check(ip)
-    {
-        return error(429, format!("too many wrong tokens from this address; try again in {secs} s"));
-    }
-    let Some(who) = authorized(req, &shared.tokens) else {
-        if let Some(ip) = ip {
-            shared.limiter.failure(ip);
-        }
-        return error(401, "missing or wrong token (Authorization: Bearer ...)");
+    let who = match check_auth(shared, req) {
+        Ok(who) => who,
+        Err(reply) => return reply,
     };
-    if let Some(ip) = ip {
-        shared.limiter.success(ip);
-    }
     // A board whose file was deleted while the server runs stays registered
     // (it may come back, e.g. `todai attach` with the same name; startup and
     // `prune` forget it), but reads as absent rather than as an empty board.
@@ -261,14 +296,19 @@ fn query_param<'a>(query: &'a str, name: &str) -> Option<&'a str> {
     query.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == name).map(|(_, v)| v)
 }
 
+/// The `cursor` parameter of `/changes` and `/stream`; none for a baseline.
+fn parse_cursor(query: &str) -> Result<Option<BTreeMap<String, u64>>, Reply> {
+    let Some(c) = query_param(query, "cursor").filter(|c| !c.is_empty()) else { return Ok(None) };
+    // Clients may percent-encode the separators.
+    let c = c.replace("%3A", ":").replace("%3a", ":").replace("%2C", ",").replace("%2c", ",");
+    todai_core::api::decode_cursor(&c).map(Some).ok_or_else(|| error(400, "bad cursor; start over without one"))
+}
+
 /// The change feed across boards; see `feed.rs`.
 fn feed(shared: &Shared, query: &str) -> Reply {
-    let cursor = match query_param(query, "cursor").filter(|c| !c.is_empty()) {
-        None => None,
-        Some(c) => match todai_core::api::decode_cursor(&c.replace("%3A", ":").replace("%3a", ":").replace("%2C", ",").replace("%2c", ",")) {
-            Some(c) => Some(c),
-            None => return error(400, "bad cursor; start over without one"),
-        },
+    let cursor = match parse_cursor(query) {
+        Ok(c) => c,
+        Err(reply) => return reply,
     };
     let wait = match query_param(query, "wait").map(str::parse::<u64>) {
         None => 0,
