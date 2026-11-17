@@ -4,6 +4,7 @@
 //! (`src/gui`) and the TUI (`crates/todai-tui`) translate their input events
 //! into `nav::Input` and draw from the same state.
 
+pub mod board;
 pub mod boardlist;
 pub mod cardtext;
 pub mod config;

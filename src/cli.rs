@@ -49,6 +49,14 @@ enum Cmd {
         /// Don't open the window.
         #[arg(long)]
         no_window: bool,
+        /// Use board NAME on this todai server instead of a file (for agents
+        /// on another machine); the operator creates it there first.
+        #[arg(long)]
+        server: Option<String>,
+        /// An agent token for --server (`todai-server device add NAME --agent`
+        /// there); saved for later commands. `$TODAI_AGENT_TOKEN` works too.
+        #[arg(long, requires = "server")]
+        token: Option<String>,
     },
     /// [agent] Print how an agent should use todai.
     Guide,
@@ -184,7 +192,8 @@ pub fn run(cli: Cli) -> Result<()> {
         }
         Cmd::Serve(args) => todai_server::run(args)?,
         Cmd::Gui { files } => gui_main(files)?,
-        Cmd::Attach { name, no_window } => {
+        Cmd::Attach { name, server: Some(server), token, .. } => attach_remote(&server, token.as_deref(), name.as_deref())?,
+        Cmd::Attach { name, no_window, .. } => {
             let path = agent::board_path(name.as_deref().unwrap_or("board"))?;
             std::fs::create_dir_all(path.parent().unwrap())?;
             std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
@@ -221,13 +230,13 @@ pub fn run(cli: Cli) -> Result<()> {
         },
 
         Cmd::AddDecision { file, title, context, options } => {
-            let e = log(&file)?.append(Actor::Agent, |s| {
+            let e = board(&file)?.append(Actor::Agent, |s| {
                 Ok(Kind::DecisionAdd { id: s.next_decision_id(), title, context, options })
             })?;
             print_id(&e.kind);
         }
         Cmd::AddTodo { file, title, context } => {
-            let e = log(&file)?.append(Actor::Agent, |s| {
+            let e = board(&file)?.append(Actor::Agent, |s| {
                 Ok(Kind::TodoAdd { id: s.next_todo_id(), title, context })
             })?;
             print_id(&e.kind);
@@ -244,44 +253,43 @@ pub fn run(cli: Cli) -> Result<()> {
             if text_md.trim().is_empty() {
                 bail!("empty elaboration");
             }
-            log(&file)?.append(Actor::Agent, |_| Ok(Kind::ElabAdd { rid, text_md }))?;
+            board(&file)?.append(Actor::Agent, |_| Ok(Kind::ElabAdd { rid, text_md }))?;
         }
         Cmd::Withdraw { file, id } => {
-            log(&file)?.append(Actor::Agent, |_| Ok(Kind::DecisionWithdraw { id }))?;
+            board(&file)?.append(Actor::Agent, |_| Ok(Kind::DecisionWithdraw { id }))?;
         }
         Cmd::Inbox { file, no_ack } => {
-            if !print_inbox(&log(&file)?, !no_ack)? {
+            if !print_inbox(&board(&file)?, !no_ack)? {
                 println!("todai: no operator updates");
             }
         }
         Cmd::Ack { file, upto } => {
-            log(&file)?.append(Actor::Agent, |s| Ok(Kind::Ack { upto_seq: upto.unwrap_or(s.last_seq) }))?;
+            board(&file)?.append(Actor::Agent, |s| Ok(Kind::Ack { upto_seq: upto.unwrap_or(s.last_seq) }))?;
         }
         Cmd::Wait { file, timeout, no_ack } => {
-            let log = log(&file)?;
-            let registered = agent::claude::register_waiter(log.path());
+            let board = board(&file)?;
+            let registered = agent::claude::register_waiter(std::path::Path::new(&board.label()));
             let deadline = timeout.map(|t| Instant::now() + Duration::from_secs(t));
-            // Polling the file size is cheap and avoids inotify edge cases with
-            // editors and network filesystems; the agent is not latency-bound here.
-            let mut last_len = None;
             loop {
-                let len = std::fs::metadata(log.path()).map(|m| m.len()).ok();
-                if len != last_len {
-                    last_len = len;
-                    if print_inbox(&log, !no_ack)? {
-                        return Ok(());
-                    }
+                if print_inbox(&board, !no_ack)? {
+                    return Ok(());
                 }
-                if deadline.is_some_and(|d| Instant::now() >= d) {
+                let left = deadline.map_or(Duration::from_secs(25), |d| d.saturating_duration_since(Instant::now()));
+                if left.is_zero() {
                     println!("todai: wait timed out");
                     drop(registered); // exit() skips destructors
                     std::process::exit(3);
                 }
-                std::thread::sleep(Duration::from_millis(500));
+                let (_, state) = board.load()?;
+                if let Err(e) = board.wait_after(state.last_seq, left.min(Duration::from_secs(25))) {
+                    // A server that went away: keep waiting, as for a file.
+                    eprintln!("todai: {e:#} (retrying)");
+                    std::thread::sleep(Duration::from_secs(3));
+                }
             }
         }
         Cmd::Show { file, json } => {
-            let (_, state) = log(&file)?.load_state()?;
+            let (_, state) = board(&file)?.load()?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&state)?);
             } else {
@@ -426,7 +434,36 @@ fn gui_main(files: Vec<PathBuf>) -> Result<()> {
 }
 
 fn log(file: &PathBuf) -> Result<Log> {
+    if todai_client::board::parse_url(&file.to_string_lossy()).is_some() {
+        bail!("operator commands work on board files; answer a server's boards in the window, the TUI or the web app");
+    }
     Ok(Log::new(std::path::absolute(file)?))
+}
+
+/// A board file, or a board on a server (`http(s)://HOST:PORT/b/ID`), for
+/// the agent commands.
+fn board(file: &std::path::Path) -> Result<todai_client::board::Board> {
+    todai_client::board::Board::open(&file.to_string_lossy())
+}
+
+/// `todai attach --server URL NAME`: an agent elsewhere uses board NAME on
+/// that server. Prints the attached marker with the board's address, which
+/// every agent command (and the hooks) take in place of a path.
+fn attach_remote(server: &str, token: Option<&str>, name: Option<&str>) -> Result<()> {
+    let server = crate::remote::normalize_url(server);
+    if let Some(t) = token {
+        crate::remote::save_agent_token(&server, t.trim())?;
+    }
+    let client = crate::remote::agent_client_for(&server)
+        .ok_or_else(|| anyhow::anyhow!("no agent token for {server}: pass --token (`todai-server device add NAME --agent` there)"))?;
+    client.check()?;
+    let name = name.unwrap_or("board");
+    let picked = crate::remote::pick_boards(&client, &[name.to_owned()])
+        .map_err(|e| e.context(format!("ask the operator to create board {name} on {server} first")))?;
+    let url = todai_client::board::remote_url(client.base(), &picked[0].id);
+    println!("{}{url}", agent::ATTACHED_MARKER);
+    println!("Pass this address as BOARD to todai commands. How to use it: `todai guide`.");
+    Ok(())
 }
 
 fn print_id(kind: &Kind) {
@@ -439,15 +476,15 @@ fn print_id(kind: &Kind) {
 
 /// Prints unprocessed operator events, acking exactly the ones shown.
 /// Returns whether there were any.
-fn print_inbox(log: &Log, ack: bool) -> Result<bool> {
-    let (events, state) = log.load_state()?;
+fn print_inbox(board: &todai_client::board::Board, ack: bool) -> Result<bool> {
+    let (events, state) = board.load()?;
     let pending = unprocessed(&events, &state);
     let Some(upto) = pending.last().map(|e| e.seq) else {
         return Ok(false);
     };
-    print!("{}", inbox::summarize(log.path(), &events, &pending));
+    print!("{}", inbox::summarize(std::path::Path::new(&board.label()), &events, &pending));
     if ack {
-        log.append(Actor::Agent, |_| Ok(Kind::Ack { upto_seq: upto }))?;
+        board.append(Actor::Agent, |_| Ok(Kind::Ack { upto_seq: upto }))?;
     }
     Ok(true)
 }

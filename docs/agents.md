@@ -59,6 +59,31 @@ registers the board with it (best effort, a one-second timeout, never an
 error), so the operator can answer from another device. Agents still write
 the file; nothing else changes for them.
 
+### Agents on another machine
+
+An agent that doesn't share the operator's filesystem (another machine, a
+container, a sandbox) can use a board on a todai server instead:
+
+```sh
+# on the server's machine, once: a token that may post agent events only
+todai-server device add ci-box --agent
+# the operator creates the board (web app: New board; or todai attach there)
+
+# where the agent runs
+todai attach --server https://box.tailnet.ts.net --token TOKEN main
+# todai: attached https://box.tailnet.ts.net/b/3f2a…
+```
+
+The marker carries the board's address instead of a path, and every agent
+command takes it in place of a file (`todai add-decision URL ...`, `inbox`,
+`wait`, `elaborate`, `withdraw`, `ack`, `show`). The Claude Code hooks
+follow it the same way. The token is saved in
+`~/.local/state/todai/agent-remotes.json` (or set `$TODAI_AGENT_TOKEN`),
+apart from the operator's tokens. An agent token can't answer anything for
+the operator: the server refuses operator events from it, and the operator
+commands (`todai resolve` ...) only work on files. Revoke it with
+`todai-server device revoke ci-box`.
+
 ## Claude Code
 
 Installed by `todai setup --agent claude`:

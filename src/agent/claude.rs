@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::attached_board;
-use crate::store::{Actor, DecisionStatus, Kind, Log, unprocessed};
+use crate::store::{Actor, DecisionStatus, Kind, unprocessed};
 use crate::{config, inbox};
 
 pub fn run(event: &str) -> Result<()> {
@@ -59,7 +59,7 @@ fn stop(session: &str, input: &Value) -> Result<Option<Value>> {
     if input["stop_hook_active"].as_bool() == Some(true) || waiter_alive(&board) {
         return Ok(None);
     }
-    let (_, state) = Log::new(&board).load_state()?;
+    let (_, state) = open_board(&board)?.load()?;
     let open = state.decisions.iter().filter(|d| d.status == DecisionStatus::Pending).count()
         + state.todos.iter().filter(|t| t.done.is_none()).count();
     if open == 0 {
@@ -73,14 +73,20 @@ fn stop(session: &str, input: &Value) -> Result<Option<Value>> {
     Ok(Some(json!({ "decision": "block", "reason": reason })))
 }
 
+/// The attached board: a file, or an address on a server (see
+/// `todai_client::board`).
+fn open_board(board: &Path) -> Result<todai_client::board::Board> {
+    todai_client::board::Board::open(&board.to_string_lossy())
+}
+
 /// Summarizes and acks unseen operator updates.
 fn take_updates(board: &Path) -> Result<Option<String>> {
-    let log = Log::new(board);
-    let (events, state) = log.load_state()?;
+    let b = open_board(board)?;
+    let (events, state) = b.load()?;
     let pending = unprocessed(&events, &state);
     let Some(upto) = pending.last().map(|e| e.seq) else { return Ok(None) };
     let summary = inbox::summarize(board, &events, &pending);
-    log.append(Actor::Agent, |_| Ok(Kind::Ack { upto_seq: upto }))?;
+    b.append(Actor::Agent, |_| Ok(Kind::Ack { upto_seq: upto }))?;
     Ok(Some(summary))
 }
 

@@ -394,6 +394,15 @@ fn device_tokens_work_until_revoked_and_agent_tokens_cannot_answer() {
         f.agent.post(f.url(&format!("/api/v2/boards/{}/actions", f.id()))).header("Authorization", format!("Bearer {token}")).send_json(&answer).unwrap().status()
     };
     assert_eq!(post(&bot), 403, "an agent token never answers for the operator");
+    let ask = json!({"type": "todo.add", "id": "", "title": "Plug it in"});
+    let agent_post = |token: &str| {
+        let mut r = f.agent.post(f.url(&format!("/api/v2/boards/{}/actions", f.id()))).header("Authorization", format!("Bearer {token}")).send_json(&ask).unwrap();
+        (r.status().as_u16(), r.body_mut().read_json::<Value>().unwrap_or(Value::Null))
+    };
+    let (status, event) = agent_post(&bot);
+    assert_eq!(status, 200, "{event}");
+    assert_eq!((event["id"].as_str(), event["by"].as_str()), (Some("t1"), Some("agent")), "the server picks the id");
+    assert_eq!(agent_post(&phone).0, 403, "and an operator token can't post as an agent");
     assert_eq!(post(&phone), 200);
 
     assert!(tokens.revoke("phone").unwrap());

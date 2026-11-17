@@ -298,10 +298,14 @@ curl -H "Authorization: Bearer $TOKEN" -d '{"type":"decision.resolve","id":"d1",
   http://127.0.0.1:7341/api/v2/boards/$ID/actions
 ```
 
-Only operator event types are accepted (`decision.resolve`,
-`decision.reopen`, `todo.done`, `todo.undone`, `elab.request`,
-`item.trash`); agent types get `403`. For `elab.request` the server assigns
-`rid`, whatever the body says. An action the board's rules refuse (unknown
+With an operator token (the main token or a device token) only operator
+event types are accepted (`decision.resolve`, `decision.reopen`,
+`todo.done`, `todo.undone`, `elab.request`, `item.trash`); with an agent
+token (`device add NAME --agent`) only agent types (`decision.add`,
+`todo.add`, `decision.withdraw`, `elab.add`, `ack`). The other kind gets
+`403`. The server assigns new ids (`id` of `decision.add` / `todo.add`,
+`rid` of `elab.request`), whatever the body says; read them from the
+returned event. An action the board's rules refuse (unknown
 id, resolving a withdrawn decision, ...) gets `422` and is not written.
 
 ## Limits

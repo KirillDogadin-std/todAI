@@ -370,26 +370,35 @@ fn poll(changes: &Changes, log: &Log, after: u64, deadline: Instant) -> anyhow::
     }
 }
 
-/// Appends one operator event. Agent events are refused: agents write board
-/// files directly, and the token is the operator's.
+/// Appends one event as the caller's role: operator tokens post operator
+/// events, agent tokens (`device add --agent`) agent events. Each is
+/// refused the other's, so an agent token can never answer for the operator.
+/// The server picks new ids (`dN`, `tN`, `rN`), whatever the body says.
 fn action(path: &Path, who: &Principal, req: &mut Request) -> Reply {
     let mut kind: Kind = match read_json(req) {
         Ok(k) => k,
         Err(e) => return e,
     };
-    if who.role != Role::Operator {
-        return error(403, "an agent token can't post operator actions");
-    }
-    if kind.allowed_actor() != Some(Actor::Operator) {
-        return error(403, "only operator actions can be posted");
+    let actor = match who.role {
+        Role::Operator => Actor::Operator,
+        Role::Agent => Actor::Agent,
+    };
+    if kind.allowed_actor() != Some(actor) {
+        return error(403, match actor {
+            Actor::Operator => "only operator actions can be posted with this token",
+            Actor::Agent => "an agent token can only post agent events",
+        });
     }
     let mut rejected = false;
-    let result = Log::new(path).append(Actor::Operator, |s| {
-        if let Kind::ElabRequest { rid, .. } = &mut kind {
-            *rid = s.next_elab_id();
+    let result = Log::new(path).append(actor, |s| {
+        match &mut kind {
+            Kind::ElabRequest { rid, .. } => *rid = s.next_elab_id(),
+            Kind::DecisionAdd { id, .. } => *id = s.next_decision_id(),
+            Kind::TodoAdd { id, .. } => *id = s.next_todo_id(),
+            _ => {}
         }
         // Validate here too, to tell a refused action from a failed write.
-        s.validate(Actor::Operator, &kind).inspect_err(|_| rejected = true)?;
+        s.validate(actor, &kind).inspect_err(|_| rejected = true)?;
         Ok(kind)
     });
     match result {

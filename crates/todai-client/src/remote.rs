@@ -158,6 +158,48 @@ fn tokens_file() -> Option<std::path::PathBuf> {
     Some(crate::config::state_dir()?.join("remotes.json"))
 }
 
+/// Agent tokens (`todai-server device add NAME --agent`) for agents on this
+/// machine that use a board on a server, by URL. Kept apart from the
+/// operator's tokens: an agent token can't answer, so the window must never
+/// pick one up.
+fn agent_tokens_file() -> Option<std::path::PathBuf> {
+    Some(crate::config::state_dir()?.join("agent-remotes.json"))
+}
+
+fn read_tokens(path: Option<std::path::PathBuf>) -> BTreeMap<String, String> {
+    path.and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+fn write_tokens(path: Option<std::path::PathBuf>, tokens: &BTreeMap<String, String>) -> Result<()> {
+    let path = path.ok_or_else(|| anyhow::anyhow!("no state dir"))?;
+    std::fs::create_dir_all(path.parent().unwrap())?;
+    let tmp = path.with_extension("json.tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+    f.write_all(serde_json::to_string_pretty(tokens)?.as_bytes())?;
+    drop(f);
+    std::fs::rename(tmp, path)?;
+    Ok(())
+}
+
+/// The client an agent uses for `server`: `$TODAI_AGENT_TOKEN`, else the
+/// agent token saved by `todai attach --server`.
+pub fn agent_client_for(server: &str) -> Option<Client> {
+    let server = server.trim_end_matches('/');
+    let token = std::env::var("TODAI_AGENT_TOKEN").ok().filter(|t| !t.trim().is_empty());
+    let token = token.or_else(|| read_tokens(agent_tokens_file()).remove(server))?;
+    Some(Client::new(server, token.trim()))
+}
+
+pub fn save_agent_token(server: &str, token: &str) -> Result<()> {
+    let mut tokens = read_tokens(agent_tokens_file());
+    if tokens.get(server).map(String::as_str) == Some(token) {
+        return Ok(());
+    }
+    tokens.insert(server.to_owned(), token.to_owned());
+    write_tokens(agent_tokens_file(), &tokens)
+}
+
 thread_local! {
     /// Tokens tests hand in instead of `remotes.json`; see [`with_test_tokens`].
     static TEST_TOKENS: std::cell::RefCell<Option<BTreeMap<String, String>>> = const { std::cell::RefCell::new(None) };
@@ -179,10 +221,7 @@ fn saved_tokens() -> BTreeMap<String, String> {
     if let Some(t) = test_tokens() {
         return t;
     }
-    tokens_file()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    read_tokens(tokens_file())
 }
 
 /// Remembers `token` for `server`, so remote tabs come back next session.
@@ -196,15 +235,7 @@ pub fn save_token(server: &str, token: &str) -> Result<()> {
         return Ok(());
     }
     tokens.insert(server.to_owned(), token.to_owned());
-    let path = tokens_file().ok_or_else(|| anyhow::anyhow!("no state dir"))?;
-    std::fs::create_dir_all(path.parent().unwrap())?;
-    let tmp = path.with_extension("json.tmp");
-    let _ = std::fs::remove_file(&tmp);
-    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
-    f.write_all(serde_json::to_string_pretty(&tokens)?.as_bytes())?;
-    drop(f);
-    std::fs::rename(tmp, path)?;
-    Ok(())
+    write_tokens(tokens_file(), &tokens)
 }
 
 /// Servers with a saved token, except this machine's own server (its
