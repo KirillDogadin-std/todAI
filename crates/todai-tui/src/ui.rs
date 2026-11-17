@@ -434,8 +434,8 @@ fn tab_bar(f: &mut Frame, app: &mut App, r: Rect) {
         let pending = o.tab.state.decisions.iter().filter(|d| d.status == todai_client::store::DecisionStatus::Pending).count()
             + o.tab.state.todos.iter().filter(|t| t.done.is_none()).count();
         let label = match pending {
-            0 => format!(" {} ", o.tab.title()),
-            n => format!(" {} {n} ", o.tab.title()),
+            0 => format!(" {} ", o.tab.title_marked()),
+            n => format!(" {} {n} ", o.tab.title_marked()),
         };
         let style = if i == app.active { Style::new().fg(ACCENT).add_modifier(Modifier::REVERSED | Modifier::BOLD) } else { Style::new() };
         let w = str_width(&label) as u16;

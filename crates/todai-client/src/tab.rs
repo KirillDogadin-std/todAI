@@ -57,6 +57,40 @@ fn or_id<'a>(name: &'a str, id: &'a str) -> &'a str {
     if name.is_empty() { id } else { name }
 }
 
+/// How a tab reaches its board, for a per-tab indicator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Link {
+    /// A file on this machine, or a server that answers.
+    Ok,
+    /// A remote tab before its first answer.
+    Connecting,
+    /// The server didn't answer the last poll; the tab keeps retrying.
+    Offline,
+    /// Never reachable (e.g. no token for the server).
+    Unavailable,
+}
+
+impl Link {
+    /// A short mark to put next to the tab's title; `None` when all is well.
+    pub fn mark(self) -> Option<&'static str> {
+        match self {
+            Link::Ok => None,
+            Link::Connecting => Some("…"),
+            Link::Offline | Link::Unavailable => Some("⚠"),
+        }
+    }
+
+    /// Tooltip text for the mark.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Link::Ok => "connected",
+            Link::Connecting => "connecting…",
+            Link::Offline => "server not answering; retrying",
+            Link::Unavailable => "can't reach this board",
+        }
+    }
+}
+
 /// One open board: its folded state, unsent drafts, and the source that
 /// flags the tab dirty whenever the board changes.
 pub struct Tab {
@@ -128,6 +162,22 @@ impl Tab {
                 let host = server.split_once("://").map_or(server.as_str(), |(_, h)| h);
                 format!("{}@{host}", or_id(name, board))
             }
+        }
+    }
+
+    pub fn link(&self) -> Link {
+        match &self.source {
+            Source::File { .. } => Link::Ok,
+            Source::Remote(r) => r.link,
+            Source::Unavailable => Link::Unavailable,
+        }
+    }
+
+    /// The title with the link mark, if any: what tab bars show.
+    pub fn title_marked(&self) -> String {
+        match self.link().mark() {
+            Some(m) => format!("{m} {}", self.title()),
+            None => self.title(),
         }
     }
 
@@ -211,6 +261,7 @@ const RETRY: Duration = Duration::from_secs(3);
 /// exactly as it would a local file.
 struct Remote {
     events: Vec<Event>,
+    link: Link,
     inbox: Arc<Mutex<Inbox>>,
     actions: mpsc::Sender<Kind>,
     stop: Arc<AtomicBool>,
@@ -224,6 +275,8 @@ struct Inbox {
     /// `events` replaces everything loaded so far.
     reset: bool,
     poll_error: Option<String>,
+    /// The server answered at least once.
+    answered: bool,
     send_error: Option<String>,
     /// Drafts to put back after a failed send.
     restore: Vec<(String, String)>,
@@ -255,7 +308,7 @@ impl Remote {
                 wake();
             }
         });
-        Remote { events: Vec::new(), inbox, actions, stop }
+        Remote { events: Vec::new(), link: Link::Connecting, inbox, actions, stop }
     }
 
     fn send(&self, kind: Kind) {
@@ -280,6 +333,11 @@ impl Remote {
             drafts.entry(k).or_insert(v);
         }
         *error = inbox.send_error.clone().or_else(|| inbox.poll_error.clone());
+        self.link = match (&inbox.poll_error, inbox.answered) {
+            (Some(_), _) => Link::Offline,
+            (None, true) => Link::Ok,
+            (None, false) => Link::Connecting,
+        };
         drop(inbox);
         Some(State::fold(&self.events).map(|s| (self.events.clone(), s)))
     }
@@ -313,7 +371,9 @@ fn poll_loop(client: &Client, board: &str, inbox: &Mutex<Inbox>, stop: &AtomicBo
                 // An empty answer still matters on a quick poll: a first load, or a recovery.
                 i.dirty |= first_load || !i.events.is_empty() || i.reset || i.poll_error.is_some();
                 i.poll_error = None;
+                i.answered = true;
             }
+            Err(_) if stop.load(Ordering::Relaxed) => return,
             Err(e) => {
                 quick = true;
                 let mut i = inbox.lock().unwrap();
@@ -324,6 +384,9 @@ fn poll_loop(client: &Client, board: &str, inbox: &Mutex<Inbox>, stop: &AtomicBo
                 std::thread::sleep(RETRY);
                 continue;
             }
+        }
+        if stop.load(Ordering::Relaxed) {
+            return; // the tab is gone; nothing to redraw
         }
         wake();
     }
@@ -433,8 +496,12 @@ mod tests {
         let loc = Location::Remote { server: client.base().into(), board, name: "b".into() };
         let mut tab = Tab::remote(loc, client, Arc::new(|| {}));
         assert_eq!(tab.title(), format!("b@{}", server.addr));
+        assert_eq!(tab.link(), Link::Connecting);
+        assert_eq!(tab.title_marked(), format!("… b@{}", server.addr));
 
         reload_until(&mut tab, "the first load", |t| t.state.decisions.len() == 1);
+        assert_eq!(tab.link(), Link::Ok);
+        assert_eq!(tab.title_marked(), tab.title());
         assert!(tab.new_posts.is_empty(), "opening a board never notifies");
 
         // An agent post arrives through the long-poll.
@@ -452,5 +519,18 @@ mod tests {
         reload_until(&mut tab, "the refusal", |t| t.error.is_some());
         assert_eq!(tab.drafts.get("d9").map(String::as_str), Some("lost?"));
         assert!(tab.error.as_deref().unwrap().contains("not sent"), "{:?}", tab.error);
+        assert_eq!(tab.link(), Link::Ok, "a refused action doesn't mean the server is down");
+    }
+
+    #[test]
+    fn remote_tab_shows_when_the_server_is_gone() {
+        // Nothing listens on a port we just bound and released.
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let base = format!("http://127.0.0.1:{port}");
+        let loc = Location::Remote { server: base.clone(), board: "x".into(), name: "b".into() };
+        let mut tab = Tab::remote(loc, Client::new(&base, "t"), Arc::new(|| {}));
+        reload_until(&mut tab, "the failed poll", |t| t.link() == Link::Offline);
+        assert!(tab.title_marked().starts_with('⚠'));
+        assert_eq!(Tab::open_failed(Location::File("/nope.jsonl".into())).link(), Link::Unavailable);
     }
 }

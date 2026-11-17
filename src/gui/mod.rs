@@ -583,11 +583,15 @@ impl App {
             ui.horizontal(|ui| {
                 for (i, t) in self.tabs.iter().enumerate() {
                     let label = match waiting(t) {
-                        0 => t.title(),
-                        n => format!("{}  {n}", t.title()),
+                        0 => t.title_marked(),
+                        n => format!("{}  {n}", t.title_marked()),
                     };
                     let r = ui.selectable_label(i == self.active, label);
-                    if r.on_hover_text(t.location.label()).clicked() {
+                    let hover = match t.link() {
+                        todai_client::tab::Link::Ok => t.location.label(),
+                        l => format!("{}\n{}", t.location.label(), l.describe()),
+                    };
+                    if r.on_hover_text(hover).clicked() {
                         self.active = i;
                     }
                     let x = ui.add(egui::Button::new(RichText::new("×").weak()).small().frame(false));
