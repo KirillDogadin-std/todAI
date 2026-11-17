@@ -17,6 +17,8 @@ struct Harness {
     vim: bool,
     /// The last text put on the clipboard.
     copied: Option<String>,
+    /// For [`Harness::remote`]: the server the tab talks to.
+    _server: Option<todai_server::Handle>,
     _dir: tempfile::TempDir,
 }
 
@@ -35,10 +37,43 @@ impl Harness {
         agent(Kind::TodoAdd { id: "t1".into(), title: "Push repo".into(), context: None });
         let ctx = egui::Context::default();
         let tab = Tab::open(log.path().to_owned(), super::input::wake(&ctx));
-        let mut h = Harness { ctx, tab, md: CommonMarkCache::default(), log, vim: true, copied: None, _dir: dir };
+        let mut h = Harness { ctx, tab, md: CommonMarkCache::default(), log, vim: true, copied: None, _server: None, _dir: dir };
         h.frame(vec![]);
         h.frame(vec![]);
         h
+    }
+
+    /// The same board, but the tab reaches it through a todai server.
+    fn remote() -> Harness {
+        let mut h = Harness::new();
+        let cfg = todai_server::Config {
+            listen: "127.0.0.1:0".into(),
+            dir: h._dir.path().join("server"),
+            boards: vec![h.log.path().into()],
+        };
+        let server = todai_server::Server::bind(&cfg).unwrap().spawn();
+        let client = todai_client::remote::Client::new(&format!("http://{}", server.addr), &server.token);
+        let loc = todai_client::tab::Location::Remote {
+            server: client.base().into(),
+            board: todai_core::api::board_id(h.log.path()),
+            name: "b".into(),
+        };
+        h.tab = Tab::remote(loc, client, super::input::wake(&h.ctx));
+        h._server = Some(server);
+        h.until("the remote board loads", |h| h.tab.state.decisions.len() == 2);
+        h
+    }
+
+    /// Runs idle frames until `done` holds; for remote tabs, which update
+    /// from other threads.
+    fn until(&mut self, what: &str, done: impl Fn(&Harness) -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !done(self) {
+            assert!(std::time::Instant::now() < deadline, "timed out waiting for {what}; error: {:?}", self.tab.error);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            self.frame(vec![]);
+        }
+        self.frame(vec![]);
     }
 
     fn frame(&mut self, events: Vec<Event>) {
@@ -144,6 +179,22 @@ fn option_then_enter_resolves() {
     let s = h.state();
     assert!(matches!(&s.decision("d1").unwrap().status, DecisionStatus::Resolved { text, .. } if text == "iced"));
     assert_eq!(h.tab.nav.mode, Mode::Normal);
+}
+
+#[test]
+fn keys_on_a_remote_tab_answer_through_the_server() {
+    let mut h = Harness::remote();
+    h.move_to(item("d1"));
+    h.type_keys("2");
+    h.key(Key::Enter, Modifiers::NONE);
+    h.until("the answer in the file", |h| h.state().decision("d1").is_some_and(|d| d.status != DecisionStatus::Pending));
+    let s = h.state();
+    assert!(matches!(&s.decision("d1").unwrap().status, DecisionStatus::Resolved { text, .. } if text == "iced"));
+    h.until("the tab sees its own answer", |h| h.tab.state.decision("d1").is_some_and(|d| d.status != DecisionStatus::Pending));
+
+    // An agent's post on the server's machine shows up in the tab.
+    h.log.append(Actor::Agent, |_| Ok(Kind::TodoAdd { id: "t2".into(), title: "Later".into(), context: None })).unwrap();
+    h.until("the agent's todo", |h| h.tab.state.todos.len() == 2);
 }
 
 #[test]

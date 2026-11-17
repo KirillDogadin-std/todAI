@@ -108,7 +108,10 @@ impl App {
 
     /// Reopens last run's tabs, skipping boards deleted since.
     pub fn restore(&mut self) {
-        let saved = Session::load(SESSION);
+        self.restore_from(Session::load(SESSION));
+    }
+
+    pub fn restore_from(&mut self, saved: Session) {
         for loc in &saved.tabs {
             if !matches!(loc, Location::File(p) if !p.exists()) {
                 self.open_or_focus(loc.clone());

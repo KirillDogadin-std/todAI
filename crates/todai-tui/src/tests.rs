@@ -427,3 +427,32 @@ fn ctrl_w_while_typing_deletes_a_word() {
     assert_eq!(h.app.tabs.len(), 1, "the tab stays");
     assert_eq!(h.app.tabs[0].tab.drafts.get("d1").map(String::as_str), Some("use "));
 }
+
+#[test]
+fn a_saved_session_brings_remote_tabs_back() {
+    use std::time::{Duration, Instant};
+    use todai_client::session::Session;
+    use todai_client::tab::Location;
+
+    let h = Harness::new(100, 30);
+    let cfg = todai_server::Config { listen: "127.0.0.1:0".into(), dir: h._dir.path().join("server"), boards: vec![h.log.path().into()] };
+    let server = todai_server::Server::bind(&cfg).unwrap().spawn();
+    let base = format!("http://{}", server.addr);
+    let remote = Location::Remote { server: base.clone(), board: todai_core::api::board_id(h.log.path()), name: "b".into() };
+    let unknown = Location::Remote { server: "http://nowhere:1".into(), board: "x".into(), name: "x".into() };
+    todai_client::remote::with_test_tokens([(base.clone(), server.token.clone())].into());
+
+    // A fresh frontend, as after a restart.
+    let mut app = App::new(Arc::new(|| {}), None, false);
+    app.restore_from(Session { tabs: vec![remote.clone(), unknown], active: 0, follow: vec![] });
+    assert_eq!(app.tabs.len(), 2);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.tabs[0].tab.state.decisions.len() != 2 {
+        assert!(Instant::now() < deadline, "the remote tab never loaded: {:?}", app.tabs[0].tab.error);
+        std::thread::sleep(Duration::from_millis(20));
+        app.tick();
+        app.tabs[0].tab.reload_if_dirty();
+    }
+    assert_eq!(app.tabs[0].tab.location, remote);
+    assert!(app.tabs[1].tab.error.as_deref().unwrap().contains("no token saved"), "a server without a token keeps its tab, with why");
+}

@@ -118,7 +118,27 @@ fn tokens_file() -> Option<std::path::PathBuf> {
     Some(crate::config::state_dir()?.join("remotes.json"))
 }
 
+thread_local! {
+    /// Tokens tests hand in instead of `remotes.json`; see [`with_test_tokens`].
+    static TEST_TOKENS: std::cell::RefCell<Option<BTreeMap<String, String>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Makes this thread see `tokens` as the saved tokens (and no local
+/// server), so frontend tests can restore remote tabs without touching the
+/// operator's state dir.
+#[doc(hidden)]
+pub fn with_test_tokens(tokens: BTreeMap<String, String>) {
+    TEST_TOKENS.with(|t| *t.borrow_mut() = Some(tokens));
+}
+
+fn test_tokens() -> Option<BTreeMap<String, String>> {
+    TEST_TOKENS.with(|t| t.borrow().clone())
+}
+
 fn saved_tokens() -> BTreeMap<String, String> {
+    if let Some(t) = test_tokens() {
+        return t;
+    }
     tokens_file()
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -127,6 +147,10 @@ fn saved_tokens() -> BTreeMap<String, String> {
 
 /// Remembers `token` for `server`, so remote tabs come back next session.
 pub fn save_token(server: &str, token: &str) -> Result<()> {
+    if test_tokens().is_some() {
+        TEST_TOKENS.with(|t| t.borrow_mut().as_mut().map(|m| m.insert(server.to_owned(), token.to_owned())));
+        return Ok(());
+    }
     let mut tokens = saved_tokens();
     if tokens.get(server).map(String::as_str) == Some(token) {
         return Ok(());
@@ -161,7 +185,15 @@ pub fn client_for(server: &str) -> Option<Client> {
 
 /// The local server's client, if one has run with this state dir.
 pub fn local() -> Option<Client> {
-    let (addr, token) = todai_core::dirs::local_server(&todai_core::dirs::server_dir()?)?;
+    if test_tokens().is_some() {
+        return None;
+    }
+    local_in(&todai_core::dirs::server_dir()?)
+}
+
+/// The client of the server whose state dir is `dir`.
+fn local_in(dir: &Path) -> Option<Client> {
+    let (addr, token) = todai_core::dirs::local_server(dir)?;
     Some(Client::new(&format!("http://{addr}"), &token))
 }
 
@@ -191,7 +223,14 @@ pub fn pick_boards(client: &Client, wanted: &[String]) -> Result<Vec<BoardInfo>>
 /// Best effort: makes `path` reachable through a running local server, so
 /// boards agents attach show up on remote frontends. Never fails the caller.
 pub fn register_local(path: &Path) {
-    let Some(client) = local() else { return };
+    if let Some(dir) = todai_core::dirs::server_dir() {
+        register_in(&dir, path);
+    }
+}
+
+/// [`register_local`] with the server's state dir given.
+pub fn register_in(dir: &Path, path: &Path) {
+    let Some(client) = local_in(dir) else { return };
     let client = Client {
         agent: ureq::Agent::config_builder()
             .http_status_as_error(false)
@@ -204,5 +243,36 @@ pub fn register_local(path: &Path) {
     // own that port now: only send the token to a todai server.
     if client.check().is_ok() {
         let _ = client.register(path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use todai_core::store::{Actor, Log};
+
+    #[test]
+    fn attach_registers_with_a_running_local_server_and_shrugs_off_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let board = |name: &str| {
+            let log = Log::new(dir.path().join(format!("{name}.jsonl")));
+            log.append(Actor::Agent, |_| Ok(Kind::TodoAdd { id: "t1".into(), title: "x".into(), context: None })).unwrap();
+            log.path().to_owned()
+        };
+        let state = dir.path().join("server");
+        register_in(&state, &board("early")); // no server has run: nothing happens, no error
+
+        let cfg = todai_server::Config { listen: "127.0.0.1:0".into(), dir: state.clone(), boards: vec![] };
+        let server = todai_server::Server::bind(&cfg).unwrap().spawn();
+        let late = board("late");
+        register_in(&state, &late);
+        let client = Client::new(&format!("http://{}", server.addr), &server.token);
+        let names: Vec<String> = client.boards().unwrap().into_iter().map(|b| b.name).collect();
+        assert_eq!(names, ["late"]);
+
+        // A stale address file (the server is gone) is ignored too.
+        drop(server);
+        std::thread::sleep(Duration::from_millis(100));
+        register_in(&state, &board("after"));
     }
 }

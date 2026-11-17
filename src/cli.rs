@@ -346,21 +346,26 @@ fn open_remote(server: &str, token: Option<&str>, wanted: &[PathBuf]) -> Result<
         crate::remote::save_token(server, t)?;
     }
     open(Vec::new())?;
-    let socket = ipc::socket_path();
+    hand_remote_to_window(&ipc::socket_path(), client.base(), picked, wanted.is_empty())
+}
+
+/// Tells the window on `socket` to open `picked` from `server`, and with
+/// `follow`, to open the boards the server registers later too.
+fn hand_remote_to_window(socket: &std::path::Path, server: &str, picked: Vec<todai_core::api::BoardInfo>, follow: bool) -> Result<()> {
     let known: Vec<String> = picked.iter().map(|b| b.id.clone()).collect();
     for b in picked {
-        let req = Request::OpenRemote { server: client.base().to_owned(), board: b.id, name: b.name.clone() };
-        if let Some(ipc::Reply { error: Some(e), .. }) = ipc::send(&socket, &req)? {
+        let req = Request::OpenRemote { server: server.to_owned(), board: b.id, name: b.name.clone() };
+        if let Some(ipc::Reply { error: Some(e), .. }) = ipc::send(socket, &req)? {
             // A window from an older todai doesn't know remote boards.
             bail!("the window refused {}: {e}; restart it with `pkill -f 'todai __gui'`", b.name);
         }
     }
     // Without board names, the whole server: boards agents attach there
     // later open as tabs too.
-    if wanted.is_empty() {
-        let req = Request::Follow { server: client.base().to_owned(), known };
-        if let Some(ipc::Reply { error: Some(e), .. }) = ipc::send(&socket, &req)? {
-            bail!("the window won't follow {}: {e}; restart it with `pkill -f 'todai __gui'`", client.base());
+    if follow {
+        let req = Request::Follow { server: server.to_owned(), known };
+        if let Some(ipc::Reply { error: Some(e), .. }) = ipc::send(socket, &req)? {
+            bail!("the window won't follow {server}: {e}; restart it with `pkill -f 'todai __gui'`");
         }
     }
     Ok(())
@@ -516,4 +521,52 @@ fn render(s: &State) -> String {
     section("Decisions made", made);
     section("Done", done);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    /// `todai open --server URL [BOARD]` minus starting a window: pick the
+    /// boards on a real server, then hand them to a stand-in window.
+    #[test]
+    fn open_server_picks_boards_and_hands_them_to_the_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let board = |name: &str| {
+            let log = Log::new(dir.path().join(format!("{name}.jsonl")));
+            log.append(Actor::Agent, |_| Ok(Kind::TodoAdd { id: "t1".into(), title: "x".into(), context: None })).unwrap();
+            log.path().to_owned()
+        };
+        let (a, b) = (board("alpha"), board("beta"));
+        let cfg = todai_server::Config { listen: "127.0.0.1:0".into(), dir: dir.path().join("server"), boards: vec![a, b.clone()] };
+        let server = todai_server::Server::bind(&cfg).unwrap().spawn();
+        let client = crate::remote::Client::new(&format!("http://{}", server.addr), &server.token);
+        client.check().unwrap();
+
+        let sock = dir.path().join("s.sock");
+        let ipc::Bind::Listening(l) = ipc::bind(&sock).unwrap() else { panic!("socket free") };
+        let (tx, rx) = mpsc::channel::<ipc::Incoming>();
+        ipc::serve(l, tx, || {});
+        let (seen_tx, seen) = mpsc::channel();
+        std::thread::spawn(move || {
+            for (req, reply) in rx {
+                seen_tx.send(req).unwrap();
+                reply.send(ipc::Reply::ok()).unwrap();
+            }
+        });
+
+        // One board by name: opened, not followed.
+        let picked = crate::remote::pick_boards(&client, &["beta".into()]).unwrap();
+        hand_remote_to_window(&sock, client.base(), picked, false).unwrap();
+        let beta = todai_core::api::board_id(&b);
+        assert_eq!(seen.recv().unwrap(), Request::OpenRemote { server: client.base().into(), board: beta.clone(), name: "beta".into() });
+
+        // The whole server: both boards, then follow with both known.
+        let picked = crate::remote::pick_boards(&client, &[]).unwrap();
+        hand_remote_to_window(&sock, client.base(), picked, true).unwrap();
+        let reqs: Vec<Request> = (0..3).map(|_| seen.recv().unwrap()).collect();
+        assert!(matches!(&reqs[2], Request::Follow { known, .. } if known.len() == 2 && known.contains(&beta)), "{reqs:?}");
+        assert!(crate::remote::pick_boards(&client, &["gamma".into()]).is_err());
+    }
 }
