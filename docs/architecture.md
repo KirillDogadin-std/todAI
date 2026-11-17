@@ -140,6 +140,15 @@ window when nothing answers.
   (24.3 vs 22.9 MB, 4.4 vs 3.1 MB release), nothing for the server, which
   doesn't link it. Untouched until a tab talks HTTPS.
 
+## Platforms
+
+The server and `todai-core` have no unix-only code (checked with
+`cargo check -p todai-server --target x86_64-pc-windows-gnu` and
+`--target aarch64-apple-darwin`). `todai-client` builds for macOS; on
+Windows it lacks the single-instance socket (`ipc.rs`, a unix socket),
+`libc::getuid`/`localtime_r` and unix file modes: a port would put those
+behind a named-pipe / Win32 module.
+
 ## Known gaps
 
 - Focus requests from `todai FILE` may be refused by Wayland compositors.

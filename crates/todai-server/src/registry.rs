@@ -2,9 +2,8 @@
 //! boards, and the address of the running server.
 
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -135,10 +134,10 @@ pub fn rotate_token(dir: &Path) -> Result<String> {
     Ok(token)
 }
 
-/// 32 random bytes as hex.
+/// 32 random bytes from the OS as hex.
 pub fn random_token() -> Result<String> {
     let mut bytes = [0u8; 32];
-    std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("no randomness from the OS: {e}"))?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
@@ -160,8 +159,20 @@ pub(crate) fn write_atomic(path: &Path, data: &[u8], mode: u32) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let tmp = path.with_extension("tmp");
     let _ = std::fs::remove_file(&tmp);
-    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(mode).open(&tmp)?;
+    let mut f = create_new(&tmp, mode)?;
     f.write_all(data)?;
     drop(f);
     std::fs::rename(&tmp, path).with_context(|| format!("write {}", path.display()))
+}
+
+/// A new file with unix permissions `mode`. Elsewhere files in the user's
+/// profile are private to them by default, and `mode` is ignored.
+fn create_new(path: &Path, mode: u32) -> std::io::Result<std::fs::File> {
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, mode);
+    #[cfg(not(unix))]
+    let _ = mode;
+    o.open(path)
 }

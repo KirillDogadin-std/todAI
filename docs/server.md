@@ -41,6 +41,11 @@ todai-server service status | uninstall
 dir (`service.json`), and enables it. `uninstall` disables it and deletes
 the unit only if it is still what `install` wrote. Linux only for now.
 
+`todai-server` builds for Linux, macOS and Windows (tokens come from the
+OS's random source; on Windows its files live in `%LOCALAPPDATA%\todai`
+and rely on the profile's permissions instead of unix modes). The window
+and the TUI need a unix socket: Linux and macOS.
+
 It listens on `127.0.0.1:7341` by default. While it runs, `todai attach` and
 `todai open FILE` register their boards with it, so boards your agents start
 using show up without extra steps.

@@ -167,7 +167,10 @@ mod tests {
         assert_eq!(t.identify(&phone), None);
         assert!(t.identify(&main).is_some(), "the others keep working");
         assert!(!t.revoke("phone").unwrap());
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(dir.path().join("tokens.json")).unwrap().permissions().mode() & 0o777, 0o600);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(dir.path().join("tokens.json")).unwrap().permissions().mode() & 0o777, 0o600);
+        }
     }
 }

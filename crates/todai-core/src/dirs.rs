@@ -4,19 +4,21 @@ use std::path::PathBuf;
 
 /// `$XDG_CONFIG_HOME/todai`, for user preferences.
 pub fn config_dir() -> Option<PathBuf> {
-    xdg_dir("XDG_CONFIG_HOME", ".config")
+    xdg_dir("XDG_CONFIG_HOME", ".config", "APPDATA")
 }
 
 /// `$XDG_STATE_HOME/todai`, for session, log and server files.
 pub fn state_dir() -> Option<PathBuf> {
-    xdg_dir("XDG_STATE_HOME", ".local/state")
+    xdg_dir("XDG_STATE_HOME", ".local/state", "LOCALAPPDATA")
 }
 
-/// `$var/todai`, or `$HOME/fallback/todai`.
-fn xdg_dir(var: &str, fallback: &str) -> Option<PathBuf> {
+/// `$var/todai`, or `$HOME/fallback/todai`, or (Windows, which has no
+/// `HOME`) `%windows%\todai`.
+fn xdg_dir(var: &str, fallback: &str, windows: &str) -> Option<PathBuf> {
     let base = std::env::var_os(var)
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(fallback)))?;
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(fallback)))
+        .or_else(|| std::env::var_os(windows).map(PathBuf::from))?;
     Some(base.join("todai"))
 }
 
