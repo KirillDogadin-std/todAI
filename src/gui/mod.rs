@@ -70,6 +70,7 @@ const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("a", "archive / unarchive"),
             ("d", "delete (to the trash, asks first)"),
             ("n", "new board in this project"),
+            ("c", "add a server: address, Tab, token, Enter"),
             ("S", "archive all stale (asks first)"),
             (".  s", "show archived / sort by activity"),
             ("Esc  q", "clear filter, marks, then close"),
@@ -487,10 +488,30 @@ impl App {
                 }
                 Err(e) => notice = Some(format!("{e:#}")),
             },
+            Action::Connect { url, token } => notice = Some(self.connect(ctx, &url, &token)),
         }
         self.reload_boards();
         if let Some(list) = &mut self.boards {
             list.notice = notice;
+        }
+    }
+
+    /// The add-a-server form: opens every board of the server as background
+    /// tabs and follows it, as `todai open --server URL --token T` does.
+    fn connect(&mut self, ctx: &egui::Context, url: &str, token: &str) -> String {
+        match crate::remote::connect(url, token) {
+            Ok((client, boards)) => {
+                let known: Vec<String> = boards.iter().map(|b| b.id.clone()).collect();
+                for b in &boards {
+                    let loc = Location::Remote { server: client.base().into(), board: b.id.clone(), name: b.name.clone() };
+                    self.open(ctx, loc);
+                }
+                let base = client.base().to_owned();
+                self.follows.follow(client, known, input::wake(ctx));
+                self.refetch(ctx, [base.clone()].into());
+                format!("Connected to {base}: {} board(s) opened in tabs; new ones open as they come.", boards.len())
+            }
+            Err(e) => format!("Couldn't connect: {e:#}"),
         }
     }
 

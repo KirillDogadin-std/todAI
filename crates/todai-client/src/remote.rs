@@ -260,6 +260,32 @@ pub fn pick_boards(client: &Client, wanted: &[String]) -> Result<Vec<BoardInfo>>
     Ok(picked)
 }
 
+/// The base URL for what the operator typed: `host:port` gets `http://`,
+/// and a trailing `/` goes.
+pub fn normalize_url(typed: &str) -> String {
+    let t = typed.trim().trim_end_matches('/');
+    if t.contains("://") { t.to_owned() } else { format!("http://{t}") }
+}
+
+/// What the frontends' add-a-server form does: checks that `url` is a todai
+/// server speaking our API that takes `token`, saves the token, and returns
+/// the client and the server's boards (all to open, and the server to follow).
+pub fn connect(url: &str, token: &str) -> Result<(Client, Vec<BoardInfo>)> {
+    let url = normalize_url(url);
+    if url == "http://" {
+        bail!("type the server's address, e.g. box.tailnet.ts.net:7341");
+    }
+    let token = token.trim();
+    if token.is_empty() {
+        bail!("type the token (`todai-server token`, or `todai-server device add NAME` on that machine)");
+    }
+    let client = Client::new(&url, token);
+    client.check()?;
+    let boards = client.boards()?;
+    save_token(client.base(), token)?;
+    Ok((client, boards))
+}
+
 /// Best effort: makes `path` reachable through a running local server, so
 /// boards agents attach show up on remote frontends. Never fails the caller.
 pub fn register_local(path: &Path) {
@@ -290,6 +316,24 @@ pub fn register_in(dir: &Path, path: &Path) {
 mod tests {
     use super::*;
     use todai_core::store::{Actor, Log};
+
+    #[test]
+    fn connect_checks_saves_and_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = Log::new(dir.path().join("b.jsonl"));
+        log.append(Actor::Agent, |_| Ok(Kind::TodoAdd { id: "t1".into(), title: "x".into(), context: None })).unwrap();
+        let cfg = todai_server::Config { listen: "127.0.0.1:0".into(), dir: dir.path().join("server"), boards: vec![log.path().into()] };
+        let server = todai_server::Server::bind(&cfg).unwrap().spawn();
+        with_test_tokens(BTreeMap::new());
+
+        assert!(connect(&server.addr.to_string(), "wrong").is_err());
+        assert!(connect("", &server.token).is_err());
+        let (client, boards) = connect(&format!("{}/", server.addr), &format!(" {} ", server.token)).unwrap();
+        assert_eq!(client.base(), format!("http://{}", server.addr));
+        assert_eq!(boards.len(), 1);
+        assert!(client_for(client.base()).is_some(), "the token is saved");
+        assert_eq!(normalize_url("https://h/"), "https://h");
+    }
 
     #[test]
     fn attach_registers_with_a_running_local_server_and_shrugs_off_none() {

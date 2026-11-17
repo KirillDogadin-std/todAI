@@ -89,6 +89,7 @@ pub const CHEATSHEET: &[(&str, &[(&str, &str)])] = &[
             ("a", "archive / unarchive"),
             ("d", "delete (to the trash, asks first)"),
             ("n", "new board in this project"),
+            ("c", "add a server: address, Tab, token, Enter"),
             ("S", "archive all stale (asks first)"),
             (".  s", "show archived / sort by activity"),
             ("Esc  q", "clear filter, marks, then close"),
@@ -274,6 +275,17 @@ fn board_list(f: &mut Frame, app: &mut App, area: Rect) {
         head.push(Line::styled(n, dim()));
     }
     head.push(match &list.naming {
+        None if list.connecting.is_some() => {
+            let f = list.connecting.as_ref().unwrap();
+            let caret = |on: bool| if on { "▏" } else { "" };
+            Line::from(vec![
+                Span::raw("Server: "),
+                Span::styled(format!("{}{}", f.url, caret(!f.on_token)), bold),
+                Span::raw("  Token: "),
+                Span::styled(format!("{}{}", "•".repeat(f.token.chars().count()), caret(f.on_token)), bold),
+                Span::styled(if f.on_token { "  Enter connect · Tab back · Esc cancel" } else { "  Enter/Tab next · Esc cancel" }, dim()),
+            ])
+        }
         Some((next_to, name)) => {
             Line::from(vec![
                 Span::raw(format!("New board in {}: ", next_to.place())),
@@ -288,7 +300,7 @@ fn board_list(f: &mut Frame, app: &mut App, area: Rect) {
                 boardlist::Sort::Activity => "by activity",
             };
             let archived = if list.show_archived { "archived shown" } else { "archived hidden" };
-            Line::styled(format!("/ filter · {sort} (s) · {archived} (.) · {} stale (S)", list.stale().len()), dim())
+            Line::styled(format!("/ filter · {sort} (s) · {archived} (.) · {} stale (S) · c add server", list.stale().len()), dim())
         }
     });
     head.push(Line::default());

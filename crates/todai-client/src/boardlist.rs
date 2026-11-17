@@ -122,11 +122,23 @@ pub enum Action {
     ArchiveStale(Vec<Row>),
     /// Create an empty board `name` in the project of board `next_to`.
     Create { next_to: Row, name: String },
+    /// Open every board of the server at `url` and follow it, like
+    /// `todai open --server URL --token TOKEN` (see [`crate::remote::connect`]).
+    Connect { url: String, token: String },
     Close,
 }
 
 /// What a server's background fetch brought back.
 type Fetched = (String, Result<Vec<BoardSummaryView>, String>);
+
+/// The add-a-server form: address, then token.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ServerForm {
+    pub url: String,
+    pub token: String,
+    /// Typing goes into the token (after Enter or Tab on the address).
+    pub on_token: bool,
+}
 
 #[derive(Default)]
 pub struct BoardList {
@@ -147,6 +159,8 @@ pub struct BoardList {
     pub marked: BTreeSet<Source>,
     /// Typing a new board's name (after `n`), and which board's project it joins.
     pub naming: Option<(Row, String)>,
+    /// Typing a server's address and token (after `c`).
+    pub connecting: Option<ServerForm>,
     /// The last action's result, shown above the rows.
     pub notice: Option<String>,
     prefix_g: bool,
@@ -277,6 +291,33 @@ impl BoardList {
     /// One input event; `vim` enables single-letter commands (in mouse mode
     /// letters type into the filter). Returns what the frontend must do.
     pub fn input(&mut self, input: &Input, vim: bool) -> Option<Action> {
+        if let Some(form) = &mut self.connecting {
+            return match input {
+                Input::Text(t) => {
+                    // Pasted text may end in a newline; tokens and URLs never contain spaces.
+                    let t: String = t.chars().filter(|c| !c.is_whitespace()).collect();
+                    if form.on_token { form.token.push_str(&t) } else { form.url.push_str(&t) }
+                    None
+                }
+                Input::Key { key: Key::Tab, pressed: true, .. } => {
+                    form.on_token = !form.on_token;
+                    None
+                }
+                Input::Key { key: Key::Enter, pressed: true, .. } if !form.on_token => {
+                    form.on_token = true;
+                    None
+                }
+                Input::Key { key: Key::Enter, pressed: true, .. } => {
+                    let f = self.connecting.take().unwrap();
+                    Some(Action::Connect { url: f.url, token: f.token })
+                }
+                Input::Key { key: Key::Escape, pressed: true, .. } => {
+                    self.connecting = None;
+                    None
+                }
+                _ => None,
+            };
+        }
         if let Some((_, name)) = &mut self.naming {
             return match input {
                 Input::Text(t) => {
@@ -353,12 +394,24 @@ impl BoardList {
 
     /// Backspace in whatever is being typed (frontends send it here).
     pub fn backspace(&mut self) {
-        if let Some((_, name)) = &mut self.naming {
+        if let Some(f) = &mut self.connecting {
+            if f.on_token { f.token.pop() } else { f.url.pop() };
+        } else if let Some((_, name)) = &mut self.naming {
             name.pop();
         } else {
             self.filter.pop();
             self.cursor = 0;
         }
+    }
+
+    /// Opens the add-a-server form.
+    pub fn start_connect(&mut self) {
+        self.connecting = Some(ServerForm::default());
+    }
+
+    /// Typing goes into a form (new board, server) rather than the list.
+    pub fn typing(&self) -> bool {
+        self.naming.is_some() || self.connecting.is_some() || self.filtering
     }
 
     /// Starts naming a new board in the project of the board under the cursor.
@@ -403,6 +456,7 @@ impl BoardList {
                 };
             }
             'n' => self.start_new(),
+            'c' => self.start_connect(),
             'q' => return Some(Action::Close),
             _ => {}
         }
@@ -622,6 +676,23 @@ mod tests {
         assert_eq!(l.visible().len(), 3);
         l.input(&text("doc"), false);
         assert_eq!(l.visible()[0].source, Source::Local(c));
+    }
+
+    #[test]
+    fn c_takes_a_server_address_and_token() {
+        let mut l = BoardList::new(&[], &[], now_ms());
+        l.input(&text("c"), true);
+        assert!(l.typing());
+        l.input(&text("box:7341"), true);
+        l.backspace();
+        l.input(&text("2"), true);
+        l.input(&key(Key::Enter), true);
+        l.input(&text("ab cd\n"), true); // pasted, with a stray space and newline
+        assert_eq!(l.input(&key(Key::Enter), true), Some(Action::Connect { url: "box:7342".into(), token: "abcd".into() }));
+        assert!(l.connecting.is_none());
+        l.input(&text("c"), true);
+        assert_eq!(l.input(&key(Key::Escape), true), None);
+        assert!(l.connecting.is_none() && !l.typing());
     }
 
     #[test]

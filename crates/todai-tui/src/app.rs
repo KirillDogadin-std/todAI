@@ -330,6 +330,25 @@ impl App {
         }
     }
 
+    /// The add-a-server form: every board of the server opens as a
+    /// background tab, and the server is followed.
+    fn connect(&mut self, url: &str, token: &str) -> String {
+        match todai_client::remote::connect(url, token) {
+            Ok((client, boards)) => {
+                let at = self.active;
+                let base = client.base().to_owned();
+                for b in &boards {
+                    self.open(Location::Remote { server: base.clone(), board: b.id.clone(), name: b.name.clone() });
+                }
+                self.active = at.min(self.tabs.len().saturating_sub(1));
+                self.follow(client, boards.iter().map(|b| b.id.clone()).collect());
+                self.refetch([base.clone()].into());
+                format!("Connected to {base}: {} board(s) opened in tabs; new ones open as they come.", boards.len())
+            }
+            Err(e) => format!("Couldn't connect: {e:#}"),
+        }
+    }
+
     pub fn board_action(&mut self, action: Action) {
         let notice = match action {
             Action::Close => {
@@ -359,6 +378,7 @@ impl App {
                 }
                 Err(e) => format!("{e:#}"),
             },
+            Action::Connect { url, token } => self.connect(&url, &token),
         };
         self.reload_boards();
         if let Some(list) = &mut self.boards {
@@ -426,6 +446,13 @@ impl App {
             }
             Event::FocusGained => self.focused = true,
             Event::FocusLost => self.focused = false,
+            Event::Paste(s) if self.boards.is_some() => {
+                // A pasted token or address types into the board list's form.
+                let list = self.boards.as_mut().unwrap();
+                if let Some(a) = list.input(&todai_client::nav::Input::Text(s), true) {
+                    self.board_action(a);
+                }
+            }
             Event::Paste(s) => {
                 if let Some(o) = self.tabs.get_mut(self.active)
                     && let Some(e) = o.edit.as_mut()
@@ -504,7 +531,7 @@ impl App {
             match k.code {
                 KeyCode::Char('o') if ctrl => self.boards = None,
                 KeyCode::Char('q' | 'c') if ctrl => self.confirm_quit = true,
-                KeyCode::Char('?') | KeyCode::F(1) if list.naming.is_none() && !list.filtering => {
+                KeyCode::Char('?') | KeyCode::F(1) if !list.typing() => {
                     self.cheatsheet = Some(0);
                 }
                 KeyCode::Backspace => list.backspace(),

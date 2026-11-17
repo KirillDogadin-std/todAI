@@ -112,6 +112,7 @@ waits on it and no agent wrote for 7 days. It owns the keyboard while open.
 | `a` | archive (moves the file to `.agents/todai/archive/`); on an archived board, unarchive |
 | `d` | delete: moves the file to the trash, after asking (local boards only: servers only archive) |
 | `n` | new empty board in the selected board's project (on its server, for a server's board); type a name, `Enter`. The agent then runs `todai attach NAME` |
+| `c` | add a todai server (also **Add server**): type its address, `Tab` or `Enter`, paste the token, `Enter`. Its boards open as background tabs and new ones follow, like `todai open --server URL --token T`; the token is saved |
 | `S` | archive every stale board, after asking |
 | `.` | show / hide archived boards |
 | `s` | sort by project / by last activity |

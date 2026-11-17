@@ -65,6 +65,9 @@ todai open --server http://HOST:7341 --token TOKEN           # every board, and 
 todai open --server http://HOST:7341 --token TOKEN board     # by name, project/name, or id
 ```
 
+Or, in the window or `todai-tui`: open the board list (`Ctrl+O`), press
+`c` (or **Add server**), and type the address and token.
+
 The token is saved (0600, `~/.local/state/todai/remotes.json`), so later
 `todai open --server URL` and session restore need no flag. `$TODAI_TOKEN`
 works too. The desktop client speaks plain HTTP only; use the VPN route

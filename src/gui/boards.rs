@@ -47,6 +47,15 @@ pub fn show(ctx: &egui::Context, list: &mut BoardList, vim: bool) -> Option<Acti
 
 fn toolbar(ui: &mut egui::Ui, list: &mut BoardList, vim: bool, action: &mut Option<Action>) {
     ui.horizontal_wrapped(|ui| {
+        if let Some(f) = &list.connecting {
+            let token: String = "•".repeat(f.token.chars().count());
+            ui.label("Server:");
+            ui.label(RichText::new(format!("{}{}", f.url, if f.on_token { "" } else { "▏" })).monospace().strong());
+            ui.label("Token:");
+            ui.label(RichText::new(format!("{token}{}", if f.on_token { "▏" } else { "" })).monospace().strong());
+            ui.weak(if f.on_token { "Enter connect · Tab back · Esc cancel" } else { "e.g. box.tailnet.ts.net:7341 · Enter/Tab next · Esc cancel" });
+            return;
+        }
         if let Some((next_to, name)) = &list.naming {
             ui.label(format!("New board in {}:", next_to.place()));
             ui.label(RichText::new(format!("{name}▏")).monospace().strong());
@@ -78,6 +87,9 @@ fn toolbar(ui: &mut egui::Ui, list: &mut BoardList, vim: bool, action: &mut Opti
             }
             if ui.small_button("New").on_hover_text("n: a board in the selected board's project").clicked() {
                 list.start_new();
+            }
+            if ui.small_button("Add server").on_hover_text("c: open a todai server's boards (address and token)").clicked() {
+                list.start_connect();
             }
             let targets = list.targets();
             if !list.marked.is_empty() {

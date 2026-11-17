@@ -46,6 +46,12 @@ pub fn handle_boards(ctx: &egui::Context, list: &mut BoardList, vim: bool) -> Op
     for ev in events {
         match &ev {
             Event::Key { key: egui::Key::Backspace, pressed: true, .. } => list.backspace(),
+            // A pasted token or address types like text.
+            Event::Paste(t) => {
+                if let Some(a) = list.input(&Input::Text(t.clone()), vim) {
+                    action = Some(a);
+                }
+            }
             Event::Key { .. } | Event::Text(_) => {
                 if let Some(i) = input(&ev)
                     && let Some(a) = list.input(&i, vim)

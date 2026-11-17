@@ -456,3 +456,26 @@ fn a_saved_session_brings_remote_tabs_back() {
     assert_eq!(app.tabs[0].tab.location, remote);
     assert!(app.tabs[1].tab.error.as_deref().unwrap().contains("no token saved"), "a server without a token keeps its tab, with why");
 }
+
+#[test]
+fn c_in_the_board_list_connects_to_a_server() {
+    let mut h = Harness::new(120, 30);
+    h.app.test_tracked = Some(vec![h.log.path().to_owned()]);
+    let cfg = todai_server::Config { listen: "127.0.0.1:0".into(), dir: h._dir.path().join("server"), boards: vec![h.log.path().into()] };
+    let server = todai_server::Server::bind(&cfg).unwrap().spawn();
+    todai_client::remote::with_test_tokens(Default::default());
+
+    h.key(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    h.keys("c");
+    assert!(h.screen().contains("Server:"), "{}", h.screen());
+    h.keys(&server.addr.to_string());
+    h.key(KeyCode::Tab, KeyModifiers::NONE);
+    h.send(Event::Paste(server.token.clone()));
+    assert!(!h.screen().contains(&server.token), "the token is never shown");
+    h.enter();
+    assert_eq!(h.app.tabs.len(), 2, "the server's board opened as a tab");
+    assert_eq!(h.app.active, 0, "in the background");
+    assert!(matches!(&h.app.tabs[1].tab.location, todai_client::tab::Location::Remote { name, .. } if name == "b"));
+    assert!(h.screen().contains("Connected to"), "{}", h.screen());
+    assert_eq!(h.app.follows.saved().len(), 1, "and followed");
+}
