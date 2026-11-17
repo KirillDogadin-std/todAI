@@ -15,6 +15,7 @@ use todai_core::api::{
 use todai_core::store::{Actor, Event, Kind, Log};
 
 use crate::changes::Changes;
+use crate::limit::{Limiter, Policy};
 use crate::{Board, Registry};
 
 /// Requests in flight, long-polls included. Past this the server answers 503
@@ -27,11 +28,12 @@ pub struct Shared {
     registry: Registry,
     in_flight: AtomicUsize,
     changes: Changes,
+    limiter: Limiter,
 }
 
 impl Shared {
     pub fn new(token: String, registry: Registry) -> Shared {
-        Shared { token, registry, in_flight: AtomicUsize::new(0), changes: Changes::new() }
+        Shared { token, registry, in_flight: AtomicUsize::new(0), changes: Changes::new(), limiter: Limiter::new(Policy::default()) }
     }
 }
 
@@ -123,8 +125,20 @@ fn handle(shared: &Shared, req: &mut Request) -> Reply {
         ["api", ..] => return error(404, format!("no route {method} {path}; this server speaks /api/{version}")),
         _ => return error(404, "not found; the API is under /api"),
     };
+    let ip = req.remote_addr().map(|a| a.ip());
+    if let Some(ip) = ip
+        && let Err(secs) = shared.limiter.check(ip)
+    {
+        return error(429, format!("too many wrong tokens from this address; try again in {secs} s"));
+    }
     if !authorized(req, &shared.token) {
+        if let Some(ip) = ip {
+            shared.limiter.failure(ip);
+        }
         return error(401, "missing or wrong token (Authorization: Bearer ...)");
+    }
+    if let Some(ip) = ip {
+        shared.limiter.success(ip);
     }
     // A board whose file was deleted while the server runs stays registered
     // (it may come back, e.g. `todai attach` with the same name; startup and

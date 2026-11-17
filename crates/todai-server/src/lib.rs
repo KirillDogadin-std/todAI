@@ -9,6 +9,7 @@
 
 mod changes;
 mod http;
+mod limit;
 mod registry;
 
 use std::io::IsTerminal;

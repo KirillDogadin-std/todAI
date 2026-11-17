@@ -234,5 +234,10 @@ id, resolving a withdrawn decision, ...) gets `422` and is not written.
 - One thread per request, at most 64 in flight (long-polls included); more
   get `503`.
 - Request bodies up to 1 MB.
-- No TLS, CORS or rate limiting in-process.
+- An address that sends 20 wrong (or missing) tokens within 10 minutes is
+  locked out for a minute (`429` for every versioned route, right token or
+  not), doubling with each lockout up to an hour; a right token resets it.
+  Behind a reverse proxy on the same machine every client is `127.0.0.1`,
+  so one client guessing locks out all of them: there, let the proxy limit.
+- No TLS or CORS in-process.
 - The web app's files are served without a token; they hold no data.

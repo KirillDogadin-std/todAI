@@ -353,3 +353,19 @@ fn siblings_creates_an_empty_board_next_to_another() {
         assert_eq!(f.post(&url, json!({"name": bad})).0, 422, "{bad:?}");
     }
 }
+
+#[test]
+fn wrong_tokens_lock_the_address_out() {
+    let f = Fixture::new();
+    let wrong = |f: &Fixture| f.agent.get(f.url("/api/v2/boards")).header("Authorization", "Bearer nope").call().unwrap();
+    for _ in 0..19 {
+        assert_eq!(wrong(&f).status(), 401);
+    }
+    assert_eq!(f.get("/api/v2/boards").0, 200, "a right token resets the count");
+    for _ in 0..20 {
+        assert_eq!(wrong(&f).status(), 401);
+    }
+    let (status, body) = f.get("/api/v2/boards");
+    assert_eq!(status, 429, "locked out even with the right token: {body}");
+    assert_eq!(f.agent.get(f.url("/api/health")).call().unwrap().status(), 200, "health stays open");
+}
