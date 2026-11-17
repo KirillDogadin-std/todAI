@@ -391,3 +391,61 @@ fn device_tokens_work_until_revoked_and_agent_tokens_cannot_answer() {
     assert_eq!(get(&phone), 401);
     assert_eq!(f.get("/api/v2/boards").0, 200, "the main token is unaffected");
 }
+
+#[test]
+fn the_change_feed_follows_every_board_and_the_registry() {
+    let f = Fixture::new();
+    let (status, base) = f.get("/api/v2/changes");
+    assert_eq!(status, 200, "{base}");
+    let base: todai_core::api::ChangeFeed = serde_json::from_value(base).unwrap();
+    assert_eq!(base.boards.len(), 1);
+    assert!(base.boards[0].new && base.boards[0].events.is_empty() && base.boards[0].last_seq == 1);
+
+    // Nothing new: the wait runs out with an empty answer.
+    let (_, idle) = f.get(&format!("/api/v2/changes?cursor={}&wait=1", base.cursor));
+    let idle: todai_core::api::ChangeFeed = serde_json::from_value(idle).unwrap();
+    assert!(idle.boards.is_empty() && idle.removed.is_empty());
+    assert_eq!(idle.cursor, base.cursor);
+
+    // An append wakes a waiting feed with just the new event.
+    let log = f.log.clone();
+    let writer = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        log.append(Actor::Agent, |_| Ok(Kind::TodoAdd { id: "t1".into(), title: "x".into(), context: None })).unwrap();
+    });
+    let start = Instant::now();
+    let (_, next) = f.get(&format!("/api/v2/changes?cursor={}&wait=30", base.cursor));
+    assert!(start.elapsed() < Duration::from_secs(5), "woken by the append");
+    writer.join().unwrap();
+    let next: todai_core::api::ChangeFeed = serde_json::from_value(next).unwrap();
+    assert_eq!(next.boards.len(), 1);
+    assert_eq!(next.boards[0].events.iter().map(|e| e.seq).collect::<Vec<_>>(), [2]);
+
+    // A board registered later shows up as new, at once.
+    let other = Log::new(f.dir.path().join("other.jsonl"));
+    other.append(Actor::Agent, |_| Ok(Kind::TodoAdd { id: "t1".into(), title: "y".into(), context: None })).unwrap();
+    let cursor = next.cursor.clone();
+    let path = other.path().to_owned();
+    let url = f.url("/api/v2/boards");
+    let auth = f.auth();
+    let registrar = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        ureq::post(url).header("Authorization", auth).send_json(json!({"path": path})).unwrap();
+    });
+    let start = Instant::now();
+    let (_, reg) = f.get(&format!("/api/v2/changes?cursor={cursor}&wait=30"));
+    assert!(start.elapsed() < Duration::from_secs(5), "woken by the registry");
+    registrar.join().unwrap();
+    let reg: todai_core::api::ChangeFeed = serde_json::from_value(reg).unwrap();
+    assert_eq!(reg.boards.len(), 1);
+    assert!(reg.boards[0].new);
+    assert_eq!(reg.boards[0].board.name, "other");
+
+    // Forgetting it reports the removal.
+    assert_eq!(f.agent.delete(f.url(&format!("/api/v2/boards/{}", board_id(other.path())))).header("Authorization", f.auth()).call().unwrap().status(), 204);
+    let (_, gone) = f.get(&format!("/api/v2/changes?cursor={}&wait=5", reg.cursor));
+    let gone: todai_core::api::ChangeFeed = serde_json::from_value(gone).unwrap();
+    assert_eq!(gone.removed, [board_id(other.path())]);
+
+    assert_eq!(f.get("/api/v2/changes?cursor=junk").0, 400);
+}

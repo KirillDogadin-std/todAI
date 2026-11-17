@@ -45,6 +45,11 @@ impl Registry {
         Ok(registry)
     }
 
+    /// `boards.json`, for watching.
+    pub fn file(&self) -> &Path {
+        &self.file
+    }
+
     fn read(&self) -> Result<BTreeMap<String, PathBuf>> {
         let paths: Vec<PathBuf> = match std::fs::read_to_string(&self.file) {
             Ok(s) => serde_json::from_str(&s).with_context(|| format!("parse {}", self.file.display()))?,

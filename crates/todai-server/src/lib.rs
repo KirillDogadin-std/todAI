@@ -9,6 +9,7 @@
 
 mod auth;
 mod changes;
+mod feed;
 mod http;
 mod limit;
 mod registry;

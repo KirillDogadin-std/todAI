@@ -175,6 +175,7 @@ fn handle(shared: &Shared, req: &mut Request) -> Reply {
             Ok(false) => error(404, format!("no board {id}")),
             Err(e) => error(500, format!("{e:#}")),
         }),
+        (Method::Get, ["changes"]) => Ok(feed(shared, query)),
         (Method::Get, ["boards", id, "events"]) => board(id).map(|p| events(&shared.changes, &p, query)),
         (Method::Post, ["boards", id, "actions"]) => board(id).map(|p| action(&p, &who, req)),
         _ => Err(error(404, format!("no route {method} {path}"))),
@@ -246,6 +247,31 @@ fn sibling(shared: &Shared, anchor: &Path, req: &mut Request) -> Result<Reply, R
 fn state(path: &Path) -> Reply {
     match Log::new(path).load_state() {
         Ok((_, state)) => json(200, &BoardView::new(BoardInfo::new(path), &state)),
+        Err(e) => error(500, format!("{e:#}")),
+    }
+}
+
+/// `name`'s value in a query string.
+fn query_param<'a>(query: &'a str, name: &str) -> Option<&'a str> {
+    query.split('&').filter_map(|kv| kv.split_once('=')).find(|(k, _)| *k == name).map(|(_, v)| v)
+}
+
+/// The change feed across boards; see `feed.rs`.
+fn feed(shared: &Shared, query: &str) -> Reply {
+    let cursor = match query_param(query, "cursor").filter(|c| !c.is_empty()) {
+        None => None,
+        Some(c) => match todai_core::api::decode_cursor(&c.replace("%3A", ":").replace("%3a", ":").replace("%2C", ",").replace("%2c", ",")) {
+            Some(c) => Some(c),
+            None => return error(400, "bad cursor; start over without one"),
+        },
+    };
+    let wait = match query_param(query, "wait").map(str::parse::<u64>) {
+        None => 0,
+        Some(Ok(w)) => w.min(MAX_WAIT_SECS),
+        Some(Err(_)) => return error(400, "bad wait"),
+    };
+    match crate::feed::wait(&shared.changes, &shared.registry, cursor, Instant::now() + Duration::from_secs(wait)) {
+        Ok(f) => json(200, &f),
         Err(e) => error(500, format!("{e:#}")),
     }
 }

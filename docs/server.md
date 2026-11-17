@@ -72,7 +72,7 @@ for it.
 
 Opened without board names, the server is **followed**: boards registered
 there later (an agent's `todai attach` on that machine) open as new tabs
-within about 15 s, in the background so the tab you're on stays. A board
+as soon as they are registered (within 15 s from servers older than todai 0.8), in the background so the tab you're on stays. A board
 opens this way once; close its tab and it stays closed. Following ends when
 you close the server's last tab, and survives a restart with the session.
 `todai-tui --server URL` does the same.
@@ -154,6 +154,7 @@ stable on their own.
 | `POST /api/v2/boards/{id}/siblings` `{"name"}` | create an empty board `name` in board `id`'s project (its `.agents/todai/`) and serve it; `201` with the new board; `422` for a bad or taken name |
 | `GET /api/v2/boards/{id}` | the board as the operator sees it (`BoardView`, below) |
 | `GET /api/v2/boards/{id}/events?after=SEQ&wait=SECS` | `{"events", "last_seq", "reset"?}`: events with `seq > after` |
+| `GET /api/v2/changes?cursor=C&wait=SECS` | `ChangeFeed`: what changed on any served board since `cursor`, in one long-poll (below) |
 | `POST /api/v2/boards/{id}/actions` | append one operator event (body: an event without `seq`, `ts`, `by`); returns the written event |
 
 Any other path under `/api/` (including the unversioned `/api/boards`) gets
@@ -232,6 +233,29 @@ changes, or with an empty list when the wait (at most 60 s) runs out. If
 `reset` is `true`, the file was replaced: drop what you have and fold the
 returned events from scratch. The desktop window does exactly this
 (`crates/todai-client/src/tab.rs`).
+
+### Following a whole server
+
+`GET /api/v2/changes` is one long-poll for every served board, for clients
+that follow a server rather than one board (the board list, an inbox across
+boards, opening boards as they are registered).
+
+```json
+{"cursor": "…",
+ "boards": [{"board": {"id": "…", "name": "main", "project": "todai"},
+             "last_seq": 12, "events": [ … ], "new": true, "reset": true}],
+ "removed": ["…"]}
+```
+
+Without `cursor` it answers at once with a baseline: every served board as
+`new`, without events. Pass the returned `cursor` (opaque) back, with
+`wait` up to 60: the server answers as soon as a board gets events (just
+those after the cursor), a board is served that wasn't (`new`, no events:
+fetch it), or one stops being served (`removed`: forgotten, archived, its
+file deleted). `reset` means the file was replaced and `events` is all of
+it. When the wait runs out the answer is empty with the same cursor. A
+malformed cursor gets `400`: start over without one. Added in todai 0.8
+without an API version bump; older servers answer `404`.
 
 ### Posting actions
 

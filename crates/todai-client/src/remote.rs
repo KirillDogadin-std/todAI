@@ -13,6 +13,27 @@ use serde::de::DeserializeOwned;
 use todai_core::api::{API_VERSION, ApiError, BoardInfo, Events, Health, Register, prefix};
 use todai_core::store::{Event, Kind};
 
+/// A non-2xx answer from the server, so callers can tell e.g. an old
+/// server (404 on a newer route) from a network failure.
+#[derive(Debug)]
+pub struct ApiFailure {
+    pub status: u16,
+    pub message: String,
+}
+
+impl std::fmt::Display for ApiFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ApiFailure {}
+
+/// The HTTP status behind `e`, if the server answered at all.
+pub fn status_of(e: &anyhow::Error) -> Option<u16> {
+    e.downcast_ref::<ApiFailure>().map(|f| f.status)
+}
+
 #[derive(Clone)]
 pub struct Client {
     base: String,
@@ -60,6 +81,24 @@ impl Client {
         self.call(req.call())
     }
 
+    /// What changed on any board since `cursor` (`None`: a baseline of every
+    /// board), waiting up to `wait`. `Ok(None)` from a server older than
+    /// the feed (todai 0.7).
+    pub fn changes(&self, cursor: Option<&str>, wait: Duration) -> Result<Option<todai_core::api::ChangeFeed>> {
+        let mut url = format!("/changes?wait={}", wait.as_secs());
+        if let Some(c) = cursor {
+            url.push_str("&cursor=");
+            url.push_str(c);
+        }
+        let req = self.agent.get(self.url(&url)).header("Authorization", self.auth());
+        let req = req.config().timeout_global(Some(wait + Duration::from_secs(10))).build();
+        match self.call(req.call()) {
+            Ok(f) => Ok(Some(f)),
+            Err(e) if status_of(&e) == Some(404) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Posts one operator action; the server assigns `seq` (and elaboration ids).
     pub fn act(&self, id: &str, kind: &Kind) -> Result<Event> {
         let req = self.agent.post(self.url(&format!("/boards/{id}/actions"))).header("Authorization", self.auth());
@@ -103,10 +142,11 @@ impl Client {
         let mut r = r.map_err(|e| anyhow::anyhow!("{}: {e}", self.base))?;
         if !r.status().is_success() {
             let status = r.status();
-            match r.body_mut().read_json::<ApiError>() {
-                Ok(e) => bail!("{}: {status}: {}", self.base, e.error),
-                Err(_) => bail!("{}: {status}", self.base),
-            }
+            let message = match r.body_mut().read_json::<ApiError>() {
+                Ok(e) => format!("{}: {status}: {}", self.base, e.error),
+                Err(_) => format!("{}: {status}", self.base),
+            };
+            return Err(ApiFailure { status: status.as_u16(), message }.into());
         }
         Ok(r.body_mut().read_json()?)
     }

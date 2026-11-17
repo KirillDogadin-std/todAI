@@ -3,8 +3,10 @@
 //!
 //! A server is followed when it was opened without naming boards
 //! (`todai open --server URL`, `todai-tui --server URL`). Each followed
-//! server gets a thread that re-lists its boards every [`INTERVAL`]; the
-//! frontend drains [`Follows::new_boards`] on its tick. A board is opened at
+//! server gets a thread that long-polls its change feed (`/changes`), so a
+//! new board shows up as soon as it is registered; servers older than the
+//! feed are re-listed every [`INTERVAL`] instead. The frontend drains
+//! [`Follows::new_boards`] on its tick. A board is opened at
 //! most once: ids already seen are remembered (and saved in the session), so
 //! a tab the operator closed stays closed. Following stops when the last tab
 //! from that server is closed.
@@ -20,8 +22,11 @@ use todai_core::api::BoardInfo;
 use crate::remote::Client;
 use crate::tab::{Location, Wake};
 
-/// How often a followed server's board list is fetched.
+/// How often a followed server's board list is fetched when it has no
+/// change feed, and how long to wait after a failure.
 pub const INTERVAL: Duration = Duration::from_secs(15);
+/// How long one feed long-poll waits.
+const LONG_POLL: Duration = Duration::from_secs(25);
 
 /// A followed server as saved in the session.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -39,8 +44,8 @@ pub struct Follows {
 
 struct Follow {
     saved: Followed,
-    /// The latest board list the poll thread fetched, not yet looked at.
-    latest: Arc<Mutex<Option<Vec<BoardInfo>>>>,
+    /// Boards the poll thread saw, not yet looked at.
+    latest: Arc<Mutex<Vec<BoardInfo>>>,
     /// Dropping it stops the poll thread.
     _stop: mpsc::Sender<()>,
 }
@@ -68,26 +73,13 @@ impl Follows {
             f.saved.known.extend(known);
             return;
         }
-        let latest = Arc::new(Mutex::new(None));
+        let latest = Arc::new(Mutex::new(Vec::new()));
         let (stop, stopped) = mpsc::channel();
         let interval = self.interval.unwrap_or(INTERVAL);
         let saved = Followed { server: client.base().to_owned(), known: known.into_iter().collect() };
         {
             let latest = latest.clone();
-            std::thread::spawn(move || {
-                loop {
-                    // An unreachable server just means no news; its tabs
-                    // already show the error.
-                    if let Ok(boards) = client.boards() {
-                        *latest.lock().unwrap() = Some(boards);
-                        wake();
-                    }
-                    match stopped.recv_timeout(interval) {
-                        Err(RecvTimeoutError::Timeout) => continue,
-                        _ => return,
-                    }
-                }
-            });
+            std::thread::spawn(move || watch(&client, &latest, &stopped, interval, &*wake));
         }
         self.list.push(Follow { saved, latest, _stop: stop });
     }
@@ -97,7 +89,7 @@ impl Follows {
     pub fn new_boards(&mut self) -> Vec<Location> {
         let mut new = Vec::new();
         for f in &mut self.list {
-            let Some(boards) = f.latest.lock().unwrap().take() else { continue };
+            let boards = std::mem::take(&mut *f.latest.lock().unwrap());
             for b in boards {
                 if f.saved.known.insert(b.id.clone()) {
                     new.push(Location::Remote { server: f.saved.server.clone(), board: b.id, name: b.name });
@@ -115,6 +107,49 @@ impl Follows {
     /// What to save in the session.
     pub fn saved(&self) -> Vec<Followed> {
         self.list.iter().map(|f| f.saved.clone()).collect()
+    }
+}
+
+/// The poll thread: hands every board it sees (the frontend keeps the
+/// unknown ones) to `latest` until `stopped` says the follow ended.
+fn watch(client: &Client, latest: &Mutex<Vec<BoardInfo>>, stopped: &mpsc::Receiver<()>, interval: Duration, wake: &(dyn Fn() + Send + Sync)) {
+    let ended = |pause: Duration| !matches!(stopped.recv_timeout(pause), Err(RecvTimeoutError::Timeout));
+    let mut cursor: Option<String> = None;
+    let mut feed = true;
+    loop {
+        let seen: Option<Vec<BoardInfo>> = if feed {
+            let wait = if cursor.is_some() { LONG_POLL } else { Duration::ZERO };
+            match client.changes(cursor.as_deref(), wait) {
+                Ok(Some(f)) => {
+                    cursor = Some(f.cursor);
+                    Some(f.boards.into_iter().filter(|c| c.new).map(|c| c.board).collect())
+                }
+                Ok(None) => {
+                    feed = false; // an older server: list instead
+                    continue;
+                }
+                // An unreachable server just means no news; its tabs
+                // already show the error.
+                Err(_) => {
+                    if ended(interval) {
+                        return;
+                    }
+                    continue;
+                }
+            }
+        } else {
+            client.boards().ok()
+        };
+        if ended(Duration::ZERO) {
+            return;
+        }
+        if let Some(boards) = seen.filter(|b| !b.is_empty()) {
+            latest.lock().unwrap().extend(boards);
+            wake();
+        }
+        if !feed && ended(interval) {
+            return;
+        }
     }
 }
 

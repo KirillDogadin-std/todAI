@@ -115,6 +115,62 @@ pub struct Events {
     pub reset: bool,
 }
 
+/// `GET /api/v2/changes?cursor=C&wait=SECS`: what changed on any served
+/// board since `cursor`, in one long-poll. Added in todai 0.8 without a
+/// version bump (a new route).
+///
+/// Without a cursor the answer comes at once and is a baseline: every
+/// served board, `new`, with no events. Pass `cursor` back on the next call.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ChangeFeed {
+    /// Opaque; hand it back as `cursor`. It encodes each board's last seq.
+    pub cursor: String,
+    /// Boards with new events, and boards served since the cursor.
+    pub boards: Vec<BoardChange>,
+    /// Ids of boards no longer served (forgotten, archived, file deleted).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct BoardChange {
+    pub board: BoardInfo,
+    pub last_seq: u64,
+    /// Events after the cursor's seq for this board; empty when `new`
+    /// (fetch the board or `events?after=0` for those).
+    pub events: Vec<Event>,
+    /// The board wasn't in the cursor: it was registered (or created,
+    /// unarchived) since.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub new: bool,
+    /// The file was replaced: `events` is the whole log; start over.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reset: bool,
+}
+
+/// The feed cursor: board id → last seq seen. Opaque to clients; encoded as
+/// `id:seq` pairs joined by `,` (`-` for no boards).
+pub fn encode_cursor(seqs: &std::collections::BTreeMap<String, u64>) -> String {
+    if seqs.is_empty() {
+        return "-".into();
+    }
+    seqs.iter().map(|(id, seq)| format!("{id}:{seq}")).collect::<Vec<_>>().join(",")
+}
+
+/// `None` for a malformed cursor.
+pub fn decode_cursor(s: &str) -> Option<std::collections::BTreeMap<String, u64>> {
+    if s == "-" {
+        return Some(Default::default());
+    }
+    s.split(',')
+        .map(|kv| {
+            let (id, seq) = kv.split_once(':')?;
+            (!id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit())).then_some(())?;
+            Some((id.to_owned(), seq.parse().ok()?))
+        })
+        .collect()
+}
+
 /// `GET /api/v2/boards/{id}`: the board as the operator sees it. Trashed
 /// items are already gone; elaborations are in request order.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -303,6 +359,17 @@ mod tests {
         assert_eq!(board, serde_json::json!({"id": board_id(Path::new("/b.jsonl")), "name": "b", "project": "/"}));
         let back: BoardView = serde_json::from_value(serde_json::to_value(&view).unwrap()).unwrap();
         assert_eq!(back, view);
+    }
+
+    #[test]
+    fn cursors_round_trip_and_refuse_junk() {
+        let m: std::collections::BTreeMap<String, u64> = [("ab12".to_owned(), 3), ("cd".to_owned(), 0)].into();
+        assert_eq!(encode_cursor(&m), "ab12:3,cd:0");
+        assert_eq!(decode_cursor(&encode_cursor(&m)), Some(m));
+        assert_eq!(decode_cursor("-"), Some(Default::default()));
+        for bad in ["", "x", "ab:", "zz:1", "ab:1,", "ab:-1"] {
+            assert_eq!(decode_cursor(bad), None, "{bad}");
+        }
     }
 
     #[test]
