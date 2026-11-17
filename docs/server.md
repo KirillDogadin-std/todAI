@@ -29,7 +29,15 @@ todai-server boards                        # list registered boards; (missing) i
 todai-server forget FILE                   # stop serving a board
 todai-server prune                         # forget boards whose file was deleted (also done at startup)
 todai-server pair [--host HOST]            # link + QR code that open the web app with the token
+todai-server service install [--listen ADDR] [--no-start] [--dry-run]   # run at login (systemd user unit)
+todai-server service status | uninstall
 ```
+
+`service install` is opt-in and reversible: it writes
+`~/.config/systemd/user/todai-server.service` (running this same binary,
+`todai serve` if you ran it as `todai`), records what it wrote in the state
+dir (`service.json`), and enables it. `uninstall` disables it and deletes
+the unit only if it is still what `install` wrote. Linux only for now.
 
 It listens on `127.0.0.1:7341` by default. While it runs, `todai attach` and
 `todai open FILE` register their boards with it, so boards your agents start
@@ -112,6 +120,7 @@ In `$XDG_STATE_HOME/todai/server/` (default `~/.local/state/todai/server/`):
 | `token` | the bearer token, 0600; created on first start |
 | `boards.json` | registered board paths |
 | `addr` | where the running server answers locally; how `todai attach` finds it |
+| `service.json` | what `service install` wrote, for `uninstall` |
 
 ## API
 

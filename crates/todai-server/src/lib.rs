@@ -11,6 +11,7 @@ mod changes;
 mod http;
 mod limit;
 mod registry;
+mod service;
 
 use std::io::IsTerminal;
 use std::net::SocketAddr;
@@ -60,6 +61,10 @@ enum Cmd {
         #[arg(long)]
         host: Option<String>,
     },
+    /// Run this server as a user service (systemd), started at login.
+    /// Opt-in: nothing is installed until you run `install`.
+    #[command(subcommand)]
+    Service(service::ServiceCmd),
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -90,6 +95,7 @@ pub fn run(args: Args) -> Result<()> {
             eprintln!("pruned {} board(s)", pruned.len());
         }
         Some(Cmd::Pair { host }) => pair(&dir, host.as_deref())?,
+        Some(Cmd::Service(cmd)) => service::run(cmd, &dir)?,
         None => {
             let files = args.files.iter().map(std::path::absolute).collect::<std::io::Result<Vec<_>>>()?;
             // Boards deleted while the server was down would otherwise stay
