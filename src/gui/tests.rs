@@ -803,3 +803,16 @@ mod boards {
         assert_eq!(h.list.visible().len(), 1, "alpha/docs");
     }
 }
+
+#[test]
+fn the_link_marks_have_glyphs() {
+    // Tab titles carry Link::mark(); a missing glyph would draw as a box.
+    let h = Harness::new();
+    h.ctx.set_fonts(super::font_definitions(None, None));
+    let _ = h.ctx.run_ui(RawInput::default(), |_| {});
+    use todai_client::tab::Link;
+    for link in [Link::Connecting, Link::Offline, Link::Unavailable] {
+        let mark = link.mark().unwrap();
+        assert!(h.ctx.fonts_mut(|f| f.has_glyphs(&egui::FontId::proportional(14.0), mark)), "no glyph for {mark}");
+    }
+}

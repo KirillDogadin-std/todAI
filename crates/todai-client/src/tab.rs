@@ -75,8 +75,10 @@ impl Link {
     pub fn mark(self) -> Option<&'static str> {
         match self {
             Link::Ok => None,
+            // Glyphs egui's bundled fonts have (the window's tests check).
             Link::Connecting => Some("…"),
-            Link::Offline | Link::Unavailable => Some("⚠"),
+            Link::Offline => Some("↻"),
+            Link::Unavailable => Some("×"),
         }
     }
 
@@ -530,7 +532,7 @@ mod tests {
         let loc = Location::Remote { server: base.clone(), board: "x".into(), name: "b".into() };
         let mut tab = Tab::remote(loc, Client::new(&base, "t"), Arc::new(|| {}));
         reload_until(&mut tab, "the failed poll", |t| t.link() == Link::Offline);
-        assert!(tab.title_marked().starts_with('⚠'));
+        assert!(tab.title_marked().starts_with('↻'));
         assert_eq!(Tab::open_failed(Location::File("/nope.jsonl".into())).link(), Link::Unavailable);
     }
 }

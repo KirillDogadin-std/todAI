@@ -89,7 +89,7 @@ you close the server's last tab, and survives a restart with the session.
 `todai-tui --server URL` does the same.
 
 Remote tabs look and work like local ones. The tab title is
-`board@host`, marked `…` until the server first answers and `⚠` while it
+`board@host`, marked `…` until the server first answers and `↻` while it
 doesn't (hover the tab for why). If the server goes away the status bar says so and the tab
 reconnects on its own; an action that could not be sent puts your text back
 in its field.
