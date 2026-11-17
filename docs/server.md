@@ -92,7 +92,24 @@ and a New board button per project),
 then a board with what waits for you,
 elaboration threads and finished items. You can resolve, mark done, undo,
 reopen, trash, and ask for an elaboration (select text first to ask about
-just that, or tap **Ask** for the whole item). Changes show up live.
+just that, or tap **Ask** for the whole item). Changes show up live, on the
+board list too (counts, new boards). **Everything waiting** (`#/inbox`)
+puts the pending decisions and todos of every board on one page, to answer
+in a row.
+
+- **Install it** from the browser's menu (Add to Home screen / Install
+  app) for its own icon and window; it starts without a connection and
+  says it is offline. Browsers allow this (and notifications) only over
+  HTTPS or on `localhost`, e.g. behind `tailscale serve`.
+- **Notifications**: tap **Notify me** in the header once. While the app
+  is open (in the background too, as long as the browser keeps it running),
+  each board's new agent posts become one notification; tapping it opens
+  the board. Nothing reaches a phone whose browser froze or closed the
+  app: there is no push service behind it.
+- **Keys** (with a keyboard; `?` shows them): `j`/`k` next/previous card
+  or board, `Enter` answer the card (or open the board), `1`–`9` pick an
+  option, `Ctrl+Enter` send from a field, `Esc` leave the field, `e` ask
+  about the card, `h` board list, `a` everything waiting, `/` filter.
 
 To pair a phone, start the server where the phone can reach it (see below),
 then on that machine:

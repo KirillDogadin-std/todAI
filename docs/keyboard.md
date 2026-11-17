@@ -181,3 +181,9 @@ select with your terminal as usual.
 `y` in visual mode copies through the terminal (OSC 52), so it reaches your
 clipboard over SSH too. In tmux, enable it with `set -g set-clipboard on`;
 a terminal without OSC 52 support ignores it.
+
+## Web app
+
+The web app served by `todai-server` has a smaller set of its own (`j`/`k`,
+`Enter`, `1`–`9`, `e`, ...), listed in [server.md](server.md#web-app) and
+behind `?` in the app.

@@ -77,7 +77,16 @@ fn web_app_is_served_without_a_token() {
     let csp = r.headers().get("Content-Security-Policy").expect("CSP on the page").to_str().unwrap().to_owned();
     assert!(csp.contains("script-src 'self'") && !csp.contains("unsafe"), "{csp}");
     assert!(r.body_mut().read_to_string().unwrap().contains("/app.js"));
-    for (path, ctype) in [("/app.js", "text/javascript"), ("/markdown.js", "text/javascript"), ("/app.css", "text/css")] {
+    assert!(csp.contains("worker-src 'self'"), "the service worker may load: {csp}");
+    for (path, ctype) in [
+        ("/app.js", "text/javascript"),
+        ("/markdown.js", "text/javascript"),
+        ("/sw.js", "text/javascript"),
+        ("/app.css", "text/css"),
+        ("/manifest.webmanifest", "application/manifest+json"),
+        ("/icon-192.png", "image/png"),
+        ("/icon-512.png", "image/png"),
+    ] {
         let r = f.agent.get(f.url(path)).call().unwrap();
         assert_eq!(r.status(), 200, "{path}");
         assert!(r.headers().get("Content-Type").unwrap().to_str().unwrap().starts_with(ctype), "{path}");

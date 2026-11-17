@@ -45,8 +45,147 @@ async function api(path, opts = {}) {
   });
   if (res.status === 401) throw new AuthError("the token was not accepted");
   const body = res.status === 204 ? null : await res.json().catch(() => null);
-  if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(body?.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   return body;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Keeps the focused field (by data-key) and its caret across a re-render.
+function keepingFocus(draw) {
+  const a = document.activeElement;
+  const key = a?.dataset?.key;
+  const caret = key && a.setSelectionRange ? [a.selectionStart, a.selectionEnd] : null;
+  draw();
+  if (!key) return;
+  const again = $("main").querySelector(`[data-key="${CSS.escape(key)}"]`);
+  if (again) {
+    again.focus({ preventScroll: true });
+    if (caret && again.setSelectionRange) again.setSelectionRange(...caret);
+  }
+}
+
+// ---- the change feed ------------------------------------------------------------
+//
+// One long-poll on /changes follows every board (docs/server.md), for as long
+// as the app is open. The screen on show gets each answer (`screen.onFeed`),
+// and agent posts become notifications.
+
+const feed = { cursor: null, running: false, abort: null };
+
+async function runFeed() {
+  if (feed.running) return;
+  feed.running = true;
+  while (token()) {
+    const ctl = new AbortController();
+    feed.abort = ctl;
+    try {
+      const q = feed.cursor ? `?cursor=${encodeURIComponent(feed.cursor)}&wait=${LONG_POLL}` : "";
+      const f = await api(`/changes${q}`, { signal: ctl.signal });
+      const baseline = !feed.cursor;
+      feed.cursor = f.cursor;
+      if ($("status").className === "error") status("live", "ok");
+      if (!baseline && (f.boards.length || f.removed?.length)) {
+        notifyAgentPosts(f);
+        screen?.onFeed?.(f);
+      }
+    } catch (e) {
+      if (e.name === "AbortError") continue; // restarted on purpose
+      if (e instanceof AuthError) break;
+      if (e.status === 400) feed.cursor = null; // a cursor this server can't read
+      status("offline, retrying…", "error");
+      await sleep(3000);
+    }
+  }
+  feed.running = false;
+}
+
+// After the phone froze the page, a pending long-poll may be dead: start over.
+function restartFeed() {
+  feed.abort?.abort();
+  runFeed();
+}
+
+// ---- notifications --------------------------------------------------------------
+
+const notifyButton = () => $("notify");
+
+function setUpNotifications() {
+  const b = notifyButton();
+  if (!("Notification" in window) || !window.isSecureContext) return;
+  b.hidden = Notification.permission !== "default";
+  b.onclick = async () => {
+    await Notification.requestPermission();
+    b.hidden = Notification.permission !== "default";
+  };
+}
+
+// One notification per board with what agents posted, unless the operator
+// is looking at that board right now.
+function notifyAgentPosts(f) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  for (const c of f.boards) {
+    const lines = c.events
+      .filter((e) => e.by === "agent")
+      .map((e) =>
+        e.type === "decision.add" ? `Decision ${e.id}: ${plainText(e.title).trim()}`
+        : e.type === "todo.add" ? `Todo ${e.id}: ${plainText(e.title).trim()}`
+        : e.type === "elab.add" ? `Elaboration ${e.rid} answered`
+        : null,
+      )
+      .filter(Boolean);
+    if (!lines.length) continue;
+    if (!document.hidden && screen?.board === c.board.id) continue;
+    showNotification(`${c.board.project} / ${c.board.name}`, lines.join("\n"), c.board.id);
+  }
+}
+
+async function showNotification(title, body, board) {
+  const opts = { body, tag: board, data: { board }, icon: "/icon-192.png" };
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    if (reg) return await reg.showNotification(title, opts);
+    const n = new Notification(title, opts);
+    n.onclick = () => {
+      window.focus();
+      location.hash = `#/b/${board}`;
+    };
+  } catch {
+    // Notifications are a nicety; the board updates either way.
+  }
+}
+
+// The installable app: a service worker for offline start and notifications.
+function setUpWorker() {
+  if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+  // A tapped notification asks the open app to show its board.
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (typeof e.data?.open === "string" && e.data.open.startsWith("/#/")) location.hash = e.data.open.slice(1);
+  });
+}
+
+// ---- the screen on show -----------------------------------------------------------
+//
+// { board?: id, refresh(): re-fetch and draw, onFeed?(feed answer) }
+
+let screen = null;
+
+function leave() {
+  screen = null;
+}
+
+// Coalesces bursts of feed answers into one refresh.
+function debounced(fn, ms = 250) {
+  let t = null;
+  return () => {
+    clearTimeout(t);
+    t = setTimeout(fn, ms);
+  };
 }
 
 const act = (board, kind) => api(`/boards/${board}/actions`, { method: "POST", body: JSON.stringify(kind) });
@@ -60,7 +199,7 @@ function status(text, kind = "") {
 // ---- pairing screen ---------------------------------------------------------
 
 function showLogin(reason) {
-  stopFollowing();
+  leave();
   $("where").textContent = "";
   const main = $("main");
   main.replaceChildren();
@@ -93,12 +232,21 @@ function showLogin(reason) {
 const listState = { rows: [], filter: "", showArchived: false, selected: new Set(), notice: "" };
 
 async function showBoards() {
-  stopFollowing();
+  const me = { refresh: null, onFeed: null };
+  me.refresh = async () => {
+    const rows = await api("/summaries");
+    if (screen !== me) return;
+    listState.rows = rows;
+    const ids = new Set(rows.map((r) => r.board.id));
+    for (const id of listState.selected) if (!ids.has(id)) listState.selected.delete(id);
+    keepingFocus(renderBoards);
+  };
+  // Any change can move a count, an age or the set of boards: re-fetch.
+  me.onFeed = debounced(() => me.refresh().catch((e) => status(e.message, "error")));
+  screen = me;
   $("where").textContent = "";
-  listState.rows = await api("/summaries");
-  const ids = new Set(listState.rows.map((r) => r.board.id));
-  for (const id of listState.selected) if (!ids.has(id)) listState.selected.delete(id);
-  renderBoards();
+  document.title = "todai";
+  await me.refresh();
   status("");
 }
 
@@ -149,6 +297,9 @@ function renderBoards() {
   const main = $("main");
   main.replaceChildren();
   main.append(el("p", "hint", "Boards this server serves: the ones agents attached or you opened while it ran."));
+  const inbox = el("a", "inbox-link", "Everything waiting, on one page →");
+  inbox.href = "#/inbox";
+  main.append(inbox);
   if (listState.notice) main.append(el("p", "notice", listState.notice));
 
   const all = listState.rows;
@@ -156,13 +307,11 @@ function renderBoards() {
   const filter = el("input");
   filter.type = "search";
   filter.placeholder = "filter";
+  filter.dataset.key = "filter";
   filter.value = listState.filter;
   filter.addEventListener("input", () => {
     listState.filter = filter.value;
-    renderBoards();
-    const f = document.querySelector(".list-tools input[type=search]");
-    f.focus();
-    f.setSelectionRange(f.value.length, f.value.length);
+    keepingFocus(renderBoards);
   });
   const archived = el("label", "toggle");
   const box = el("input");
@@ -254,45 +403,33 @@ const waiting = (v) => v.decisions.filter((d) => d.status === "pending").length 
 
 // ---- one board ----------------------------------------------------------------
 
-let following = null; // { id, stop }
 const drafts = new Map(); // input key -> text, kept across re-renders
 
-function stopFollowing() {
-  if (following) following.stop = true;
-  following = null;
-}
-
 async function showBoard(id) {
-  stopFollowing();
-  const me = { id, stop: false };
-  following = me;
-  let view = await api(`/boards/${id}`);
-  render(view);
-  // Long-poll for changes; re-fetch the folded board when anything happens.
-  let after = view.last_seq;
-  while (!me.stop) {
-    try {
-      const ev = await api(`/boards/${id}/events?after=${after}&wait=${LONG_POLL}`);
-      if (me.stop) return;
-      status("live", "ok");
-      if (ev.events.length || ev.reset) {
-        view = await api(`/boards/${id}`);
-        after = view.last_seq;
-        if (!me.stop) render(view);
-      }
-    } catch (e) {
-      if (e instanceof AuthError) return showLogin(e.message);
-      status("offline, retrying…", "error");
-      await new Promise((r) => setTimeout(r, 3000));
+  const me = { board: id, refresh: null, onFeed: null };
+  me.refresh = async () => {
+    const view = await api(`/boards/${id}`);
+    if (screen === me) render(view);
+  };
+  me.onFeed = (f) => {
+    if (f.removed?.includes(id)) {
+      status("this board is no longer served (archived or forgotten)", "error");
+      return;
     }
-  }
+    if (f.boards.some((c) => c.board.id === id)) me.refresh().catch((e) => status(e.message, "error"));
+  };
+  screen = me;
+  await me.refresh();
+  status("live", "ok");
 }
 
 function render(v) {
+  keepingFocus(() => drawBoard(v));
+}
+
+function drawBoard(v) {
   $("where").textContent = `${v.board.project} / ${v.board.name}`;
   document.title = `${waiting(v) ? `(${waiting(v)}) ` : ""}${v.board.name} · todai`;
-  const focused = document.activeElement?.dataset?.key;
-  const caret = focused ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
   const openDetails = new Set([...document.querySelectorAll("details[open]")].map((d) => d.dataset.key));
 
   const main = $("main");
@@ -318,13 +455,63 @@ function render(v) {
   sum.append(el("h2", null, "Done"), el("span", "count", String(doneD.length + doneT.length)));
   done.append(sum, ...doneD.map((d) => resolvedCard(v, d)), ...doneT.map((t) => doneCard(v, t)));
   main.append(done);
+}
 
-  if (focused) {
-    const input = main.querySelector(`[data-key="${CSS.escape(focused)}"]`);
-    if (input) {
-      input.focus({ preventScroll: true });
-      if (caret && input.setSelectionRange) input.setSelectionRange(...caret);
+// ---- everything waiting, across boards ------------------------------------------
+
+async function showInbox() {
+  const views = new Map(); // board id -> view
+  const me = { refresh: null, onFeed: null };
+  const draw = () => {
+    if (screen !== me) return;
+    keepingFocus(() => drawInbox([...views.values()]));
+  };
+  const load = async (id) => {
+    try {
+      views.set(id, await api(`/boards/${id}`));
+    } catch (e) {
+      if (e.status === 404) views.delete(id);
+      else throw e;
     }
+  };
+  me.refresh = async () => {
+    const rows = await api("/summaries");
+    views.clear();
+    await Promise.all(rows.filter((r) => !r.archived).map((r) => load(r.board.id)));
+    draw();
+  };
+  me.onFeed = async (f) => {
+    for (const id of f.removed || []) views.delete(id);
+    await Promise.all(f.boards.map((c) => load(c.board.id))).catch((e) => status(e.message, "error"));
+    draw();
+  };
+  screen = me;
+  $("where").textContent = "everything waiting";
+  await me.refresh();
+  status("live", "ok");
+}
+
+function drawInbox(views) {
+  const total = views.reduce((n, v) => n + waiting(v), 0);
+  document.title = `${total ? `(${total}) ` : ""}waiting · todai`;
+  const main = $("main");
+  main.replaceChildren();
+  const back = el("a", "inbox-link", "← all boards");
+  back.href = "#/";
+  main.append(back);
+  const busy = views.filter((v) => waiting(v)).sort((a, b) => (a.board.project + a.board.name).localeCompare(b.board.project + b.board.name));
+  if (!busy.length) {
+    main.append(el("p", "empty", "Nothing is waiting for you on any board."));
+    return;
+  }
+  for (const v of busy) {
+    const head = el("div", "project-head");
+    const a = el("a", "board-link", `${v.board.project} / ${v.board.name}`);
+    a.href = `#/b/${v.board.id}`;
+    head.append(a, el("span", "count", String(waiting(v))));
+    main.append(head);
+    for (const d of v.decisions.filter((d) => d.status === "pending")) main.append(decisionCard(v, d));
+    for (const t of v.todos.filter((t) => !t.done)) main.append(todoCard(v, t));
   }
 }
 
@@ -378,7 +565,7 @@ async function send(v, kind, draftKey, btn) {
     await act(v.board.id, kind);
     if (draftKey) drafts.delete(draftKey);
     status("sent", "ok");
-    render(await api(`/boards/${v.board.id}`));
+    await screen?.refresh();
   } catch (e) {
     if (e instanceof AuthError) return showLogin(e.message);
     status(e.message, "error");
@@ -389,7 +576,7 @@ async function send(v, kind, draftKey, btn) {
 function decisionCard(v, d) {
   const c = card(d.id);
   c.append(itemBody(d));
-  const key = `resolve:${d.id}`;
+  const key = `resolve:${v.board.id}:${d.id}`;
   const input = draftInput(key, true, "your answer");
   if (d.options.length) {
     const opts = el("div", "options");
@@ -417,7 +604,7 @@ function decisionCard(v, d) {
 function todoCard(v, t) {
   const c = card(t.id);
   c.append(itemBody(t));
-  const key = `done:${t.id}`;
+  const key = `done:${v.board.id}:${t.id}`;
   const input = draftInput(key, false, "note for the agent (optional)");
   const done = button("Done", () => {
     const note = input.value.trim();
@@ -576,9 +763,11 @@ function openAsk(v, target, selection, parent) {
 async function route() {
   takeTokenFromUrl();
   if (!token()) return showLogin();
+  runFeed();
   const m = location.hash.match(/^#\/b\/([0-9a-f]{16})$/);
   try {
     if (m) await showBoard(m[1]);
+    else if (location.hash === "#/inbox") await showInbox();
     else await showBoards();
   } catch (e) {
     if (e instanceof AuthError) {
@@ -590,8 +779,118 @@ async function route() {
 }
 
 window.addEventListener("hashchange", route);
-// Back from the background on a phone: the long-poll may have been frozen.
+// Back from the background on a phone: the long-poll may have been frozen,
+// and the screen may be out of date.
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && $("ask").hidden && !location.hash.startsWith("#/b/")) route();
+  if (document.visibilityState !== "visible" || !token()) return;
+  restartFeed();
+  screen?.refresh().catch((e) => status(e.message, "error"));
 });
+
+// ---- keyboard ---------------------------------------------------------------------
+//
+// For a desktop browser or a phone with a keyboard. Documented in
+// docs/server.md ("Web app"); the window and the TUI have their own keys.
+
+const KEYS = [
+  ["j / k", "next / previous card or board"],
+  ["Enter", "answer the card (focus its field) · open the board"],
+  ["1–9", "pick that option of the decision"],
+  ["Ctrl+Enter", "in a field: send (Resolve / Done)"],
+  ["Esc", "leave the field · close this help"],
+  ["e", "ask about the card"],
+  ["h", "board list"],
+  ["a", "everything waiting"],
+  ["/", "filter the board list"],
+  ["?", "this help"],
+];
+
+let current = -1; // index into navigable()
+
+const navigable = () => [...$("main").querySelectorAll("article.card, ul.boards li")];
+
+function setCurrent(i) {
+  const items = navigable();
+  items.forEach((x) => x.classList.remove("current"));
+  if (!items.length) return (current = -1);
+  current = Math.max(0, Math.min(i, items.length - 1));
+  items[current].classList.add("current");
+  items[current].scrollIntoView({ block: "nearest" });
+}
+
+function toggleHelp(show) {
+  let box = $("keys");
+  if (!box) {
+    box = el("div", "keys");
+    box.id = "keys";
+    box.hidden = true;
+    const t = el("table");
+    for (const [k, what] of KEYS) {
+      const tr = el("tr");
+      tr.append(el("td", "key", k), el("td", null, what));
+      t.append(tr);
+    }
+    box.append(el("h2", null, "Keys"), t, el("p", "muted", "Esc or ? to close"));
+    box.addEventListener("click", () => toggleHelp(false));
+    document.body.append(box);
+  }
+  box.hidden = !(show ?? box.hidden);
+}
+
+document.addEventListener("keydown", (e) => {
+  const t = e.target;
+  const typing = t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement;
+  if (typing) {
+    if (e.key === "Escape") t.blur();
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      t.closest(".card")?.querySelector("button.primary")?.click();
+    }
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey || !$("ask").hidden) return;
+  const items = navigable();
+  const cur = items[current];
+  const k = e.key;
+  if (k === "Escape") return toggleHelp(false);
+  if (k === "?") return toggleHelp();
+  if (k === "j") return setCurrent(current + 1);
+  if (k === "k") return setCurrent(current < 0 ? 0 : current - 1);
+  if (k === "h") return (location.hash = "#/");
+  if (k === "a") return (location.hash = "#/inbox");
+  if (k === "/") {
+    const f = $("main").querySelector("input[type=search]");
+    if (f) {
+      e.preventDefault();
+      f.focus();
+    }
+    return;
+  }
+  if (!cur) return;
+  if (k === "Enter") {
+    e.preventDefault();
+    const link = cur.querySelector("a");
+    if (cur.tagName === "LI" && link) return link.click();
+    cur.querySelector("textarea, input:not([type=checkbox])")?.focus();
+    return;
+  }
+  if (/^[1-9]$/.test(k)) {
+    cur.querySelectorAll(".options button")[Number(k) - 1]?.click();
+    return;
+  }
+  if (k === "e") {
+    [...cur.querySelectorAll("button")].find((b) => b.textContent === "Ask")?.click();
+  }
+});
+
+// A new screen starts with nothing marked.
+new MutationObserver(() => {
+  const items = navigable();
+  if (current >= items.length) current = items.length - 1;
+  if (current >= 0) items[current]?.classList.add("current");
+}).observe($("main"), { childList: true });
+window.addEventListener("hashchange", () => (current = -1));
+
+setUpWorker();
+setUpNotifications();
 route();

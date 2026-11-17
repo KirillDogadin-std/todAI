@@ -173,3 +173,25 @@ hr { border: none; border-top: 1px solid var(--border); margin: 0.6rem 0; }
   border-left: 3px solid var(--accent); padding-left: 0.6rem;
   font-style: italic; white-space: pre-wrap;
 }
+
+/* Keyboard: the card or board j/k is on, and the help overlay (?). */
+.current { outline: 2px solid var(--accent); outline-offset: 2px; }
+.keys {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  padding: 1rem;
+}
+.keys[hidden] { display: none; }
+.keys table { border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+.keys td { padding: 0.3rem 0.8rem; border-top: 1px solid var(--border); }
+.keys td.key { font-family: ui-monospace, monospace; color: var(--strong); white-space: nowrap; }
+
+.inbox-link { display: inline-block; margin: 0 0 0.75rem; color: var(--accent); }
+.board-link { color: var(--strong); font-weight: 600; text-decoration: none; }
+#notify { margin-right: 0; }

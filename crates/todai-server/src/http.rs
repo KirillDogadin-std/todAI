@@ -51,21 +51,26 @@ fn json(status: u16, body: &impl Serialize) -> Reply {
 /// The web app (`crates/todai-server/web/`), built into the binary. Served
 /// without a token: it holds no data, and asks for the token itself.
 fn asset(path: &str) -> Option<Reply> {
-    let (body, content_type) = match path {
-        "/" | "/index.html" => (include_str!("../web/index.html"), "text/html; charset=utf-8"),
-        "/app.js" => (include_str!("../web/app.js"), "text/javascript; charset=utf-8"),
-        "/markdown.js" => (include_str!("../web/markdown.js"), "text/javascript; charset=utf-8"),
-        "/app.css" => (include_str!("../web/app.css"), "text/css; charset=utf-8"),
-        "/icon.svg" => (include_str!("../web/icon.svg"), "image/svg+xml"),
+    let text = |s: &'static str| s.as_bytes();
+    let (body, content_type): (&'static [u8], _) = match path {
+        "/" | "/index.html" => (text(include_str!("../web/index.html")), "text/html; charset=utf-8"),
+        "/app.js" => (text(include_str!("../web/app.js")), "text/javascript; charset=utf-8"),
+        "/markdown.js" => (text(include_str!("../web/markdown.js")), "text/javascript; charset=utf-8"),
+        "/sw.js" => (text(include_str!("../web/sw.js")), "text/javascript; charset=utf-8"),
+        "/app.css" => (text(include_str!("../web/app.css")), "text/css; charset=utf-8"),
+        "/manifest.webmanifest" => (text(include_str!("../web/manifest.webmanifest")), "application/manifest+json"),
+        "/icon.svg" => (text(include_str!("../web/icon.svg")), "image/svg+xml"),
+        "/icon-192.png" => (include_bytes!("../web/icon-192.png"), "image/png"),
+        "/icon-512.png" => (include_bytes!("../web/icon-512.png"), "image/png"),
         _ => return None,
     };
-    Some(Reply { status: 200, body: Some(body.as_bytes().to_vec()), content_type })
+    Some(Reply { status: 200, body: Some(body.to_vec()), content_type })
 }
 
 /// Same-origin only and no inline code, so text an agent wrote can't run as
 /// script even if the app had an escaping bug.
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; \
-                   manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+                   manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 fn error(status: u16, msg: impl Into<String>) -> Reply {
     json(status, &ApiError { error: msg.into() })
