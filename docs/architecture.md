@@ -122,6 +122,16 @@ window when nothing answers.
 - Not covered automatically: real Claude Code and pi sessions, and how the
   window looks. `examples/demo.sh` builds a populated board for manual checks.
 
+## Dependency choices
+
+- **HTTP server: `tiny_http` 0.12**, not the maintained fork `tiny_http_dh`.
+  The fork (0.12.4, checked 2026-11-17) needs Rust 1.98, newer than the
+  release builds' `rust:1.92-bullseye`, and `cargo audit` reports nothing
+  for 0.12. The server only uses `Server::http`, `incoming_requests`,
+  `Request` (url, method, headers, remote address, body reader, respond)
+  and `unblock`, so switching is a few lines in `lib.rs` and `http.rs`
+  when the floor allows it.
+
 ## Known gaps
 
 - Focus requests from `todai FILE` may be refused by Wayland compositors.
